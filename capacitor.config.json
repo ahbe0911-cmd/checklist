@@ -1,0 +1,6 @@
+{
+  "appId": "com.ahbe0911.checklist",
+  "appName": "چک‌لیست من",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}
