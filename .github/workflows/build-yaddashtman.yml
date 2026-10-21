@@ -14,9 +14,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - name: Install Android SDK
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Set up Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Restore web page
+        run: |
+          mkdir -p yaddashtman-android/app/src/main/assets
+          base64 --decode yaddashtman-android/original-html.gz.b64 | gzip --decompress > yaddashtman-android/app/src/main/assets/index.html
+          test -s yaddashtman-android/app/src/main/assets/index.html
       - name: Install Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
