@@ -1,0 +1,14 @@
+plugins {
+    id 'com.android.application'
+}
+android {
+    namespace 'com.kakhki.yaddashtman'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.kakhki.yaddashtman'
+        minSdk 23
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+}
