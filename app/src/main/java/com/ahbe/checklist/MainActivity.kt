@@ -21,8 +21,9 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
-import android.icu.util.PersianCalendar
-import android.icu.util.Calendar as IcuCalendar
+import android.icu.text.SimpleDateFormat
+import android.icu.util.ULocale
+import java.util.Date
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -238,7 +239,7 @@ class MainActivity : Activity() {
         noteList = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
-        scroll.addView(noteList, ScrollView.LayoutParams(-1, -2))
+        scroll.addView(noteList, FrameLayout.LayoutParams(-1, -2))
 
         emptyState = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -305,15 +306,8 @@ class MainActivity : Activity() {
     }
 
     private fun updateDate() {
-        val date = PersianCalendar()
-        val day = date.get(IcuCalendar.DAY_OF_MONTH)
-        val month = date.get(IcuCalendar.MONTH)
-        val year = date.get(IcuCalendar.YEAR)
-        val months = arrayOf(
-            "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
-            "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"
-        )
-        dateLabel.text = fa(day) + " " + months[month.coerceIn(0, 11)] + " " + fa(year)
+        val format = SimpleDateFormat("d MMMM yyyy", ULocale("fa_IR@calendar=persian"))
+        dateLabel.text = format.format(Date())
     }
 
     private fun fa(num: Int) = num.toString().map {
