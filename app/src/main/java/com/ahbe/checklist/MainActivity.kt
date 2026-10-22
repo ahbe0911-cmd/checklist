@@ -1,6 +1,17 @@
 package com.ahbe.checklist
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.app.TimePickerDialog
+import android.app.AlarmManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import android.widget.NumberPicker
+import android.widget.Toast
+import android.icu.util.Calendar as PersianIcuCalendar
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Paint
@@ -38,7 +49,8 @@ class MainActivity : Activity() {
         val id: String,
         val text: String,
         var completed: Boolean,
-        val color: Int
+        val color: Int,
+        var reminderAt: Long? = null
     )
 
     private enum class Filter { ALL, ACTIVE, COMPLETED }
@@ -60,6 +72,12 @@ class MainActivity : Activity() {
     private val notes = mutableListOf<Note>()
     private var filter = Filter.ALL
     private var search = ""
+    private val titleFont by lazy { loadTypeface("fonts/far_titrbd.ttf") }
+    private val textFont by lazy { loadTypeface("fonts/far_nazanin.ttf") }
+    private val dateFont by lazy { loadTypeface("fonts/a_rooznameh.ttf") }
+
+    private fun loadTypeface(path: String): Typeface =
+        runCatching { Typeface.createFromAsset(assets, path) }.getOrDefault(Typeface.DEFAULT)
 
     private lateinit var dateLabel: TextView
     private lateinit var progressText: TextView
@@ -78,6 +96,7 @@ class MainActivity : Activity() {
         window.decorView.systemUiVisibility =
             View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        ReminderEngine.createChannel(this)
         loadNotes()
         buildScreen()
         updateDate()
@@ -86,7 +105,10 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        if (::dateLabel.isInitialized) updateDate()
+        if (::dateLabel.isInitialized) {
+            updateDate()
+            ReminderEngine.restore(this)
+        }
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
@@ -109,7 +131,8 @@ class MainActivity : Activity() {
         setTextColor(color)
         gravity = Gravity.CENTER_VERTICAL
         includeFontPadding = false
-        if (bold) typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        typeface = if (sp >= 22f) titleFont else textFont
+        if (bold && typeface == Typeface.DEFAULT) typeface = Typeface.DEFAULT_BOLD
     }
 
     private fun buildScreen() {
@@ -146,7 +169,7 @@ class MainActivity : Activity() {
             marginStart = dp(10)
             marginEnd = dp(10)
         })
-        dateLabel = label("", 13f, muted, true)
+        dateLabel = label("", 13f, muted, true).apply { typeface = dateFont }
         heading.addView(dateLabel)
 
         val progressBlock = LinearLayout(this).apply {
@@ -186,6 +209,7 @@ class MainActivity : Activity() {
             compoundDrawablePadding = dp(6)
             setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0)
         }
+        searchInput.typeface = textFont
         searchAndFilters.addView(searchInput, LinearLayout.LayoutParams(0, dp(41), 1f).apply {
             marginEnd = dp(10)
         })
@@ -284,6 +308,7 @@ class MainActivity : Activity() {
                 } else false
             }
         }
+        input.typeface = textFont
         bottom.addView(input, LinearLayout.LayoutParams(0, -1, 1f))
         val add = ImageButton(this).apply {
             setImageResource(R.drawable.ic_arrow_up)
@@ -362,6 +387,10 @@ class MainActivity : Activity() {
             contentDescription = (if (note.completed) "لغو انجام " else "انجام ") + note.text
             setOnClickListener {
                 note.completed = !note.completed
+                if (note.completed && note.reminderAt != null) {
+                    ReminderEngine.cancel(this@MainActivity, note.id)
+                    note.reminderAt = null
+                }
                 saveNotes()
                 renderNotes()
             }
@@ -385,13 +414,33 @@ class MainActivity : Activity() {
             }, FrameLayout.LayoutParams(dp(17), dp(17), Gravity.CENTER))
         }
 
-        val textLabel = label(note.text, 15f, if (note.completed) muted else ink, !note.completed)
-            .apply {
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                if (note.completed) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
-            }
-        tapArea.addView(textLabel, LinearLayout.LayoutParams(0, -2, 1f))
+        val noteTextColumn = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        tapArea.addView(noteTextColumn, LinearLayout.LayoutParams(0, -2, 1f))
+        val noteText = label(note.text, 17f, if (note.completed) muted else ink, !note.completed).apply {
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            if (note.completed) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
+        }
+        noteTextColumn.addView(noteText, LinearLayout.LayoutParams(-1, -2))
+        val reminderTime = note.reminderAt
+        if (reminderTime != null && reminderTime > System.currentTimeMillis()) {
+            val scheduled = SimpleDateFormat("d MMMM yyyy، HH:mm",
+                ULocale("fa_IR@calendar=persian")).format(Date(reminderTime))
+            noteTextColumn.addView(label("یادآوری: " + scheduled, 12f, indigo),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+        }
+        val bell = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_bell)
+            imageTintList = ColorStateList.valueOf(if (reminderTime != null) indigo else muted)
+            background = shape(if (reminderTime != null) Color.rgb(224, 231, 255)
+                    else Color.argb(160, 255, 255, 255), 10)
+            setPadding(dp(9), dp(9), dp(9), dp(9))
+            contentDescription = "تنظیم اعلان " + note.text
+            setOnClickListener { showReminderDialog(note) }
+        }
+        card.addView(bell, LinearLayout.LayoutParams(dp(37), dp(37)).apply {
+            marginStart = dp(7)
+        })
 
         val remove = ImageButton(this).apply {
             setImageResource(R.drawable.ic_trash)
@@ -403,6 +452,7 @@ class MainActivity : Activity() {
                 isEnabled = false
                 card.animate().alpha(0f).scaleX(0.96f).scaleY(0.9f).setDuration(200L)
                     .withEndAction {
+                        ReminderEngine.cancel(this@MainActivity, note.id)
                         notes.removeAll { it.id == note.id }
                         saveNotes()
                         renderNotes()
@@ -439,7 +489,8 @@ class MainActivity : Activity() {
                     obj.getString("id"),
                     obj.getString("text"),
                     obj.optBoolean("completed", false),
-                    obj.optInt("color", palette[i % palette.size])
+                    obj.optInt("color", palette[i % palette.size]),
+                    obj.optLong("reminderAt", 0L).takeIf { it > 0L }
                 ))
             }
         }
@@ -453,6 +504,7 @@ class MainActivity : Activity() {
                 put("text", it.text)
                 put("completed", it.completed)
                 put("color", it.color)
+                put("reminderAt", it.reminderAt ?: 0L)
             })
         }
         getSharedPreferences("checklist_native", MODE_PRIVATE)
