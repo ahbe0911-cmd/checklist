@@ -50,7 +50,8 @@ class MainActivity : Activity() {
         val text: String,
         var completed: Boolean,
         val color: Int,
-        var reminderAt: Long? = null
+        var reminderAt: Long? = null,
+        var calendarEventId: Long? = null
     )
 
     private enum class Filter { ALL, ACTIVE, COMPLETED }
@@ -72,6 +73,7 @@ class MainActivity : Activity() {
     private val notes = mutableListOf<Note>()
     private var filter = Filter.ALL
     private var search = ""
+    private var pendingPermissionNoteId: String? = null
     private val titleFont by lazy { loadTypeface("fonts/far_titrbd.ttf") }
     private val textFont by lazy { loadTypeface("fonts/far_nazanin.ttf") }
     private val dateFont by lazy { loadTypeface("fonts/a_rooznameh.ttf") }
@@ -389,6 +391,8 @@ class MainActivity : Activity() {
                 note.completed = !note.completed
                 if (note.completed && note.reminderAt != null) {
                     ReminderEngine.cancel(this@MainActivity, note.id)
+                    PhoneCalendarStore.deleteEvent(this@MainActivity, note.calendarEventId)
+                    note.calendarEventId = null
                     note.reminderAt = null
                 }
                 saveNotes()
@@ -436,7 +440,7 @@ class MainActivity : Activity() {
                     else Color.argb(160, 255, 255, 255), 10)
             setPadding(dp(9), dp(9), dp(9), dp(9))
             contentDescription = "تنظیم اعلان " + note.text
-            setOnClickListener { showReminderDialog(note) }
+            setOnClickListener { startReminderSetup(note) }
         }
         card.addView(bell, LinearLayout.LayoutParams(dp(37), dp(37)).apply {
             marginStart = dp(7)
@@ -453,6 +457,7 @@ class MainActivity : Activity() {
                 card.animate().alpha(0f).scaleX(0.96f).scaleY(0.9f).setDuration(200L)
                     .withEndAction {
                         ReminderEngine.cancel(this@MainActivity, note.id)
+                        PhoneCalendarStore.deleteEvent(this@MainActivity, note.calendarEventId)
                         notes.removeAll { it.id == note.id }
                         saveNotes()
                         renderNotes()
@@ -538,6 +543,8 @@ class MainActivity : Activity() {
             .setNegativeButton("انصراف", null)
             .setNeutralButton("حذف اعلان") { _, _ ->
                 ReminderEngine.cancel(this, note.id)
+                PhoneCalendarStore.deleteEvent(this, note.calendarEventId)
+                note.calendarEventId = null
                 note.reminderAt = null
                 saveNotes()
                 renderNotes()
@@ -558,25 +565,55 @@ class MainActivity : Activity() {
                         Toast.makeText(this, "تاریخ و زمان باید در آینده باشد", Toast.LENGTH_LONG).show()
                         return@TimePickerDialog
                     }
+                    val newEventId = PhoneCalendarStore.saveEvent(
+                        this, note.text, timestamp, note.calendarEventId
+                    )
                     note.reminderAt = timestamp
+                    if (newEventId != null) {
+                        note.calendarEventId = newEventId
+                        Toast.makeText(this, "یادداشت در تقویم گوشی ثبت شد", Toast.LENGTH_LONG).show()
+                    } else if (!PhoneCalendarStore.hasPermissions(this)) {
+                        Toast.makeText(this, "اعلان داخل برنامه تنظیم شد؛ برای ثبت در تقویم گوشی، مجوز تقویم را فعال کنید", Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(this, "یادآوری داخل برنامه تنظیم شد؛ تقویم گوشی در دسترس یا قابل‌نوشتن نیست", Toast.LENGTH_LONG).show()
+                    }
                     saveNotes()
                     ReminderEngine.schedule(this, note.id, note.text, timestamp)
                     renderNotes()
-                    requestReminderPermissionsIfNeeded()
+                    showMissingReminderAccessOptions()
                 }, initial.get(java.util.Calendar.HOUR_OF_DAY),
                     initial.get(java.util.Calendar.MINUTE), true).show()
             }
             .show()
     }
 
-    private fun requestReminderPermissionsIfNeeded() {
+    private fun startReminderSetup(note: Note) {
+        if (note.completed) {
+            Toast.makeText(this, "برای تنظیم اعلان، ابتدا یادداشت را به حالت جاری برگردانید", Toast.LENGTH_LONG).show()
+            return
+        }
+        val missing = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 811)
-            return
+            missing.add(android.Manifest.permission.POST_NOTIFICATIONS)
         }
-        promptPreciseAlarmPermission()
+        if (Build.VERSION.SDK_INT >= 23) {
+            if (checkSelfPermission(android.Manifest.permission.READ_CALENDAR) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                missing.add(android.Manifest.permission.READ_CALENDAR)
+            }
+            if (checkSelfPermission(android.Manifest.permission.WRITE_CALENDAR) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                missing.add(android.Manifest.permission.WRITE_CALENDAR)
+            }
+        }
+        if (missing.isNotEmpty()) {
+            pendingPermissionNoteId = note.id
+            requestPermissions(missing.toTypedArray(), 811)
+        } else {
+            showReminderDialog(note)
+        }
     }
 
     override fun onRequestPermissionsResult(
@@ -585,7 +622,60 @@ class MainActivity : Activity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 811) promptPreciseAlarmPermission()
+        if (requestCode == 811) {
+            val noteId = pendingPermissionNoteId
+            pendingPermissionNoteId = null
+            val note = notes.firstOrNull { it.id == noteId } ?: return
+            if (Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(this, "مجوز اعلان داده نشد؛ یادآوری داخل برنامه ذخیره می‌شود اما ممکن است اعلان نمایش داده نشود", Toast.LENGTH_LONG).show()
+            }
+            if (!PhoneCalendarStore.hasPermissions(this)) {
+                Toast.makeText(this, "بدون مجوز تقویم، رویداد در تقویم اصلی گوشی ثبت نمی‌شود", Toast.LENGTH_LONG).show()
+            }
+            showReminderDialog(note)
+        }
+    }
+
+    private fun showMissingReminderAccessOptions() {
+        val notificationMissing = Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        val exactMissing = Build.VERSION.SDK_INT >= 31 &&
+            !(getSystemService(Context.ALARM_SERVICE) as AlarmManager).canScheduleExactAlarms()
+        if (!notificationMissing && !exactMissing) return
+
+        val message = when {
+            notificationMissing && exactMissing ->
+                "برای نمایش اعلان و اجرای آن در ساعت دقیق، دسترسی‌های زیر را بررسی کن."
+            notificationMissing ->
+                "اعلان‌های این برنامه مسدود هستند. برای دیدن یادآوری‌ها، اجازه اعلان را فعال کن."
+            else ->
+                "زنگ دقیق فعال نیست؛ اندروید ممکن است یادآوری را با تأخیر اجرا کند."
+        }
+        val builder = AlertDialog.Builder(this)
+            .setTitle("تنظیم دسترسی یادآوری")
+            .setMessage(message)
+            .setNegativeButton("بعداً", null)
+        if (notificationMissing) {
+            builder.setPositiveButton("تنظیم اعلان‌ها") { _, _ ->
+                runCatching {
+                    startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                        putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                    })
+                }
+            }
+        }
+        if (exactMissing) {
+            builder.setNeutralButton("تنظیم زنگ دقیق") { _, _ ->
+                runCatching {
+                    startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+                        .setData(Uri.parse("package:$packageName")))
+                }
+            }
+        }
+        builder.show()
     }
 
     private fun promptPreciseAlarmPermission() {
@@ -619,7 +709,8 @@ class MainActivity : Activity() {
                     obj.getString("text"),
                     obj.optBoolean("completed", false),
                     obj.optInt("color", palette[i % palette.size]),
-                    obj.optLong("reminderAt", 0L).takeIf { it > 0L }
+                    obj.optLong("reminderAt", 0L).takeIf { it > 0L },
+                    obj.optLong("calendarEventId", 0L).takeIf { it > 0L }
                 ))
             }
         }
@@ -634,6 +725,7 @@ class MainActivity : Activity() {
                 put("completed", it.completed)
                 put("color", it.color)
                 put("reminderAt", it.reminderAt ?: 0L)
+                put("calendarEventId", it.calendarEventId ?: 0L)
             })
         }
         getSharedPreferences("checklist_native", MODE_PRIVATE)
