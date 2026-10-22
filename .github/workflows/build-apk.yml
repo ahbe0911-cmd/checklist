@@ -22,13 +22,13 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+
       - name: Install required SDK packages
-        run: |
-          export ANDROID_HOME=/usr/local/lib/android/sdk
-          export ANDROID_SDK_ROOT="$ANDROID_HOME"
-          yes | "$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager" --licenses > /dev/null || true
-          "$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
-          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
