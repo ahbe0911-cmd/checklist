@@ -8,7 +8,6 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import org.json.JSONArray
@@ -92,7 +91,6 @@ object ReminderEngine {
             .setStyle(Notification.BigTextStyle().bigText(text))
             .setAutoCancel(true)
             .setContentIntent(contentIntent)
-            .setColor(Color.rgb(99, 102, 241))
             .setCategory(Notification.CATEGORY_REMINDER)
             .build()
         runCatching { manager.notify(id.hashCode() and Int.MAX_VALUE, notification) }
