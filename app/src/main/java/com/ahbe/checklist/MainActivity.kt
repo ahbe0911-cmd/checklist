@@ -74,7 +74,7 @@ class MainActivity : Activity() {
     private var filter = Filter.ALL
     private var search = ""
     private var pendingPermissionNoteId: String? = null
-    private val titleFont by lazy { loadTypeface("fonts/far_titrbd.ttf") }
+    private val titleFont by lazy { loadTypeface("fonts/far_vazir.ttf") }
     private val textFont by lazy { loadTypeface("fonts/far_nazanin.ttf") }
     private val dateFont by lazy { loadTypeface("fonts/a_rooznameh.ttf") }
 
