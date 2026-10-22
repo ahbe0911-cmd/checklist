@@ -478,6 +478,121 @@ class MainActivity : Activity() {
         scroll.post { scroll.smoothScrollTo(0, noteList.bottom) }
     }
 
+
+    private fun showReminderDialog(note: Note) {
+        if (note.completed) {
+            Toast.makeText(this, "برای تنظیم اعلان، ابتدا یادداشت را به حالت جاری برگردانید", Toast.LENGTH_LONG).show()
+            return
+        }
+        val months = arrayOf("فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
+            "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند")
+        val persian = PersianIcuCalendar.getInstance(ULocale("fa_IR@calendar=persian"))
+        note.reminderAt?.let { persian.timeInMillis = it }
+        val currentYear = PersianIcuCalendar.getInstance(
+            ULocale("fa_IR@calendar=persian")).get(PersianIcuCalendar.YEAR)
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.CENTER
+            setPadding(dp(9), dp(12), dp(9), dp(4))
+        }
+        val year = NumberPicker(this).apply {
+            minValue = currentYear
+            maxValue = currentYear + 10
+            value = persian.get(PersianIcuCalendar.YEAR).coerceIn(minValue, maxValue)
+            wrapSelectorWheel = false
+            descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
+        }
+        val month = NumberPicker(this).apply {
+            minValue = 1
+            maxValue = 12
+            displayedValues = months
+            value = persian.get(PersianIcuCalendar.MONTH) + 1
+            wrapSelectorWheel = false
+            descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
+        }
+        val day = NumberPicker(this).apply {
+            minValue = 1
+            maxValue = 31
+            value = persian.get(PersianIcuCalendar.DAY_OF_MONTH)
+            wrapSelectorWheel = false
+            descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
+        }
+        fun limitDay() {
+            val c = PersianIcuCalendar.getInstance(ULocale("fa_IR@calendar=persian"))
+            c.set(PersianIcuCalendar.YEAR, year.value)
+            c.set(PersianIcuCalendar.MONTH, month.value - 1)
+            c.set(PersianIcuCalendar.DAY_OF_MONTH, 1)
+            day.maxValue = c.getActualMaximum(PersianIcuCalendar.DAY_OF_MONTH)
+        }
+        year.setOnValueChangedListener { _, _, _ -> limitDay() }
+        month.setOnValueChangedListener { _, _, _ -> limitDay() }
+        limitDay()
+        row.addView(day, LinearLayout.LayoutParams(0, dp(157), 1f))
+        row.addView(month, LinearLayout.LayoutParams(0, dp(157), 1.45f))
+        row.addView(year, LinearLayout.LayoutParams(0, dp(157), 1.15f))
+        AlertDialog.Builder(this)
+            .setTitle("تاریخ اعلان")
+            .setMessage(note.text)
+            .setView(row)
+            .setNegativeButton("انصراف", null)
+            .setNeutralButton("حذف اعلان") { _, _ ->
+                ReminderEngine.cancel(this, note.id)
+                note.reminderAt = null
+                saveNotes()
+                renderNotes()
+            }
+            .setPositiveButton("انتخاب ساعت") { _, _ ->
+                val initial = java.util.Calendar.getInstance().apply {
+                    timeInMillis = note.reminderAt ?: System.currentTimeMillis()
+                }
+                TimePickerDialog(this, { _, hour, minute ->
+                    val target = PersianIcuCalendar.getInstance(
+                        ULocale("fa_IR@calendar=persian"))
+                    target.isLenient = false
+                    target.clear()
+                    target.set(year.value, month.value - 1, day.value, hour, minute, 0)
+                    target.set(PersianIcuCalendar.MILLISECOND, 0)
+                    val timestamp = runCatching { target.timeInMillis }.getOrNull()
+                    if (timestamp == null || timestamp <= System.currentTimeMillis()) {
+                        Toast.makeText(this, "تاریخ و زمان باید در آینده باشد", Toast.LENGTH_LONG).show()
+                        return@TimePickerDialog
+                    }
+                    note.reminderAt = timestamp
+                    saveNotes()
+                    ReminderEngine.schedule(this, note.id, note.text, timestamp)
+                    renderNotes()
+                    requestReminderPermissionsIfNeeded()
+                }, initial.get(java.util.Calendar.HOUR_OF_DAY),
+                    initial.get(java.util.Calendar.MINUTE), true).show()
+            }
+            .show()
+    }
+
+    private fun requestReminderPermissionsIfNeeded() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 811)
+        }
+        if (Build.VERSION.SDK_INT >= 31) {
+            val manager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            if (!manager.canScheduleExactAlarms()) {
+                AlertDialog.Builder(this)
+                    .setTitle("دسترسی زمان‌بندی دقیق")
+                    .setMessage("برای نمایش اعلان دقیقاً در زمان انتخابی، دسترسی «Alarms & reminders» را فعال کنید. بدون آن، اعلان ممکن است با تأخیر نمایش داده شود.")
+                    .setPositiveButton("تنظیم دسترسی") { _, _ ->
+                        runCatching {
+                            startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+                                .setData(Uri.parse("package:$packageName")))
+                        }
+                    }
+                    .setNegativeButton("بعداً", null)
+                    .show()
+            }
+        }
+    }
+
     private fun loadNotes() {
         val content = getSharedPreferences("checklist_native", MODE_PRIVATE)
             .getString("optimized_notes", "[]") ?: "[]"
