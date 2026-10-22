@@ -39,9 +39,9 @@ jobs:
       - name: Install supplied Persian font families
         run: |
           mkdir -p app/src/main/assets/fonts
-          curl --fail --location --retry 3 --silent --show-error "https://raw.githubusercontent.com/nadi1368/hris/main/src/assets/fonts/bundle/fonts/Far_TitrBd.ttf" -o app/src/main/assets/fonts/far_titrbd.ttf
-          curl --fail --location --retry 3 --silent --show-error "https://raw.githubusercontent.com/nadi1368/hris/main/src/assets/fonts/bundle/fonts/Far_Nazanin.ttf" -o app/src/main/assets/fonts/far_nazanin.ttf
-          curl --fail --location --retry 3 --silent --show-error "https://raw.githubusercontent.com/MahmoodHashem/digital_book_reader/main/assets/fonts/ARooznameh.ttf" -o app/src/main/assets/fonts/a_rooznameh.ttf
+          curl --fail --location --retry 3 --silent --show-error "https://raw.githubusercontent.com/nadi1368/hris/c6a52b7ff837281639e9d5d70a468ef50cc791d7/src/assets/fonts/bundle/fonts/Far_TitrBd.ttf" -o app/src/main/assets/fonts/far_titrbd.ttf
+          curl --fail --location --retry 3 --silent --show-error "https://raw.githubusercontent.com/nadi1368/hris/c6a52b7ff837281639e9d5d70a468ef50cc791d7/src/assets/fonts/bundle/fonts/Far_Nazanin.ttf" -o app/src/main/assets/fonts/far_nazanin.ttf
+          curl --fail --location --retry 3 --silent --show-error "https://raw.githubusercontent.com/MahmoodHashem/digital_book_reader/9f01097b9633202fc89aebcd48070023a0dc2106/assets/fonts/ARooznameh.ttf" -o app/src/main/assets/fonts/a_rooznameh.ttf
           test "$(git hash-object app/src/main/assets/fonts/far_titrbd.ttf)" = "f8e7c5e4e992744de431426387997f27f8c5797e"
           test "$(git hash-object app/src/main/assets/fonts/far_nazanin.ttf)" = "5394a09545ac3274f1d24a3ff24777cac8baa584"
           test "$(git hash-object app/src/main/assets/fonts/a_rooznameh.ttf)" = "81c6269ddcbfef6b0f041dc2a55c3d2a396b19aa"
