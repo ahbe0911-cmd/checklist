@@ -1,7 +1,9 @@
 node_modules/
 dist/
 android/
+.gradle/
+.idea/
+local.properties
+*.iml
+**/build/
 .DS_Store
-.env
-.env.*
-!.env.example
