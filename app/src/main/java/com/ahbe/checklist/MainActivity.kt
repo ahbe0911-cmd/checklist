@@ -574,7 +574,21 @@ class MainActivity : Activity() {
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 811)
+            return
         }
+        promptPreciseAlarmPermission()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 811) promptPreciseAlarmPermission()
+    }
+
+    private fun promptPreciseAlarmPermission() {
         if (Build.VERSION.SDK_INT >= 31) {
             val manager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
             if (!manager.canScheduleExactAlarms()) {
