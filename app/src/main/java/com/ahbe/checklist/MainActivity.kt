@@ -359,16 +359,24 @@ class MainActivity : Activity() {
 
         val bottom = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), dp(7), dp(8), dp(7))
-            background = shape(Color.WHITE, 17, Color.rgb(241, 245, 249))
-            elevation = dp(9).toFloat()
+            setPadding(dp(9), dp(8), dp(9), dp(8))
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.WHITE, Color.rgb(250, 252, 255))
+            ).apply {
+                cornerRadius = dp(23).toFloat()
+                setStroke(dp(1), Color.rgb(229, 235, 243))
+            }
+            elevation = dp(12).toFloat()
+            clipToPadding = false
         }
-        root.addView(bottom, LinearLayout.LayoutParams(-1, dp(65)).apply {
-            marginStart = dp(20)
-            marginEnd = dp(20)
-            bottomMargin = dp(12)
-            topMargin = dp(8)
+        root.addView(bottom, LinearLayout.LayoutParams(-1, dp(72)).apply {
+            marginStart = dp(18)
+            marginEnd = dp(18)
+            bottomMargin = dp(14)
+            topMargin = dp(10)
         })
         input = EditText(this).apply {
             hint = "یک کار جدید بنویس..."
@@ -377,7 +385,9 @@ class MainActivity : Activity() {
             setHintTextColor(Color.rgb(148, 163, 184))
             background = null
             setSingleLine(true)
-            setPadding(dp(12), 0, dp(12), 0)
+            gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(11), 0, dp(11), 0)
             imeOptions = EditorInfo.IME_ACTION_DONE
             setOnEditorActionListener { _, action, _ ->
                 if (action == EditorInfo.IME_ACTION_DONE) {
@@ -400,40 +410,41 @@ class MainActivity : Activity() {
         microphoneButton = ImageButton(this).apply {
             setImageResource(R.drawable.ic_microphone)
             imageTintList = ColorStateList.valueOf(muted)
-            background = shape(Color.rgb(243, 246, 249), 12)
+            background = shape(Color.rgb(242, 246, 250), 22, Color.rgb(225, 232, 240))
             scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(dp(10), dp(10), dp(10), dp(10))
+            setPadding(dp(11), dp(11), dp(11), dp(11))
             contentDescription = "ضبط پیام صوتی"
             setOnClickListener { onMicrophoneClicked() }
         }
-        bottom.addView(microphoneButton, LinearLayout.LayoutParams(dp(43), dp(43)).apply {
-            marginStart = dp(5)
+        bottom.addView(microphoneButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+            marginStart = dp(8)
         })
 
         cancelAudioButton = ImageButton(this).apply {
             setImageResource(R.drawable.ic_close)
-            imageTintList = ColorStateList.valueOf(muted)
-            background = shape(Color.rgb(249, 241, 240), 11)
+            imageTintList = ColorStateList.valueOf(Color.rgb(190, 73, 78))
+            background = shape(Color.rgb(255, 242, 242), 20, Color.rgb(250, 220, 220))
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             setPadding(dp(10), dp(10), dp(10), dp(10))
             contentDescription = "لغو ضبط صدا"
             setOnClickListener { discardVoiceRecording() }
             visibility = View.GONE
         }
-        bottom.addView(cancelAudioButton, LinearLayout.LayoutParams(dp(39), dp(39)).apply {
-            marginStart = dp(5)
+        bottom.addView(cancelAudioButton, LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+            marginStart = dp(7)
         })
 
         sendButton = ImageButton(this).apply {
-            setImageResource(R.drawable.ic_arrow_up)
+            setImageResource(R.drawable.ic_send_message)
             imageTintList = ColorStateList.valueOf(Color.WHITE)
-            background = shape(ink, 12)
+            background = shape(ink, 17)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(dp(10), dp(10), dp(10), dp(10))
+            setPadding(dp(12), dp(12), dp(12), dp(12))
             contentDescription = "افزودن یادداشت"
+            elevation = dp(2).toFloat()
             setOnClickListener { addNote() }
         }
-        bottom.addView(sendButton, LinearLayout.LayoutParams(dp(45), dp(45)))
+        bottom.addView(sendButton, LinearLayout.LayoutParams(dp(49), dp(49)))
         refreshVoiceComposer()
     }
 
@@ -541,25 +552,41 @@ class MainActivity : Activity() {
         }
         noteTextColumn.addView(noteText, LinearLayout.LayoutParams(-1, -2))
         if (note.audioFilename != null) {
+            val audioBadge = label("یادداشت صوتی", 10f, indigo, true).apply {
+                background = shape(Color.rgb(237, 240, 255), 8)
+                setPadding(dp(8), dp(4), dp(8), dp(4))
+            }
+            noteTextColumn.addView(audioBadge,
+                LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(5) })
+
             val playback = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 layoutDirection = View.LAYOUT_DIRECTION_RTL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dp(3), 0, 0)
+                setPadding(dp(5), dp(4), dp(10), dp(4))
+                background = shape(Color.rgb(248, 249, 255), 13, Color.rgb(230, 233, 250))
             }
             val isPlaying = playingNoteId == note.id
             val play = ImageButton(this).apply {
                 setImageResource(if (isPlaying) R.drawable.ic_pause_voice else R.drawable.ic_play_voice)
                 imageTintList = ColorStateList.valueOf(indigo)
-                background = shape(Color.rgb(234, 237, 252), 9)
-                setPadding(dp(8), dp(8), dp(8), dp(8))
-                contentDescription = if (isPlaying) "توقف پخش" else "پخش پیام صوتی"
+                background = shape(Color.WHITE, 18, Color.rgb(231, 234, 250))
+                setPadding(dp(9), dp(9), dp(9), dp(9))
+                contentDescription = if (isPlaying) "توقف پخش" else "پخش " + note.text
                 setOnClickListener { toggleVoicePlayback(note) }
             }
-            playback.addView(play, LinearLayout.LayoutParams(dp(35), dp(35)))
-            playback.addView(label(formatDuration(note.audioDurationMs), 12f, muted),
-                LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
-            noteTextColumn.addView(playback, LinearLayout.LayoutParams(-1, -2))
+            playback.addView(play, LinearLayout.LayoutParams(dp(36), dp(36)))
+            playback.addView(ImageView(this).apply {
+                setImageResource(R.drawable.ic_waveform)
+                imageTintList = ColorStateList.valueOf(indigo)
+                contentDescription = "موج صدای ضبط‌شده"
+            }, LinearLayout.LayoutParams(dp(20), dp(20)).apply {
+                marginStart = dp(10)
+            })
+            playback.addView(label(formatDuration(note.audioDurationMs), 12f, muted, true),
+                LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(7) })
+            noteTextColumn.addView(playback,
+                LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(5) })
         }
         val reminderTime = note.reminderAt
         if (reminderTime != null && reminderTime > System.currentTimeMillis()) {
@@ -613,7 +640,7 @@ class MainActivity : Activity() {
     private fun addNote() {
         if (recorder != null) finishVoiceRecording()
         if (pendingVoiceFilename != null) {
-            submitVoiceNote()
+            showVoiceNoteNameDialog()
             return
         }
         val text = input.text.toString().trim()
@@ -880,12 +907,17 @@ class MainActivity : Activity() {
         microphoneButton.imageTintList = ColorStateList.valueOf(
             if (isRecording) Color.WHITE else muted
         )
-        microphoneButton.background = shape(
-            if (isRecording) Color.rgb(208, 65, 69) else Color.rgb(243, 246, 249), 12
-        )
+        microphoneButton.background = if (isRecording) {
+            shape(Color.rgb(211, 65, 72), 22)
+        } else {
+            shape(Color.rgb(242, 246, 250), 22, Color.rgb(225, 232, 240))
+        }
         microphoneButton.contentDescription =
             if (isRecording) "توقف ضبط" else "ضبط پیام صوتی"
-        sendButton.contentDescription = if (active) "ارسال پیام صوتی" else "افزودن یادداشت"
+        sendButton.setImageResource(R.drawable.ic_send_message)
+        sendButton.background = shape(if (hasDraft) emerald else ink, 17)
+        sendButton.contentDescription = if (active) "نام‌گذاری و ارسال پیام صوتی" else "افزودن یادداشت"
+        voiceStatus.setTextColor(if (isRecording) Color.rgb(190, 63, 69) else indigo)
         if (hasDraft) {
             voiceStatus.text = "صدا آماده ارسال • " + formatDuration(pendingVoiceDurationMs)
         } else if (isRecording) {
@@ -978,7 +1010,55 @@ class MainActivity : Activity() {
         refreshVoiceComposer()
     }
 
-    private fun submitVoiceNote() {
+    private fun showVoiceNoteNameDialog() {
+        if (pendingVoiceFilename == null) return
+        val nameInput = EditText(this).apply {
+            setText("پیام صوتی")
+            setSelection(text.length)
+            hint = "مثلاً: ایده ویدئوی جدید"
+            textSize = 16f
+            typeface = textFont
+            setTextColor(ink)
+            setHintTextColor(Color.rgb(148, 163, 184))
+            setSingleLine(true)
+            gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(13), 0, dp(13), 0)
+            background = shape(Color.rgb(248, 250, 252), 13, softBorder)
+            setFilters(arrayOf(android.text.InputFilter.LengthFilter(60)))
+        }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(20), dp(6), dp(20), dp(5))
+            addView(label("برای اینکه بعداً راحت‌تر پیدایش کنی، یک نام کوتاه انتخاب کن.", 13f, muted),
+                LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
+            addView(nameInput, LinearLayout.LayoutParams(-1, dp(50)))
+            addView(label("مدت صدا: " + formatDuration(pendingVoiceDurationMs), 12f, indigo, true),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("نام‌گذاری پیام صوتی")
+            .setView(content)
+            .setNegativeButton("انصراف", null)
+            .setPositiveButton("ثبت پیام صوتی", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val title = nameInput.text.toString().trim()
+                if (title.isEmpty()) {
+                    nameInput.error = "یک نام برای پیام صوتی بنویس"
+                    return@setOnClickListener
+                }
+                submitVoiceNote(title)
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
+        nameInput.requestFocus()
+    }
+
+    private fun submitVoiceNote(title: String) {
         val filename = pendingVoiceFilename ?: return
         val file = storedAudioFile(filename)
         if (file == null || !file.isFile || file.length() == 0L) {
@@ -988,7 +1068,7 @@ class MainActivity : Activity() {
         }
         notes.add(Note(
             UUID.randomUUID().toString(),
-            "پیام صوتی",
+            title,
             false,
             palette[Random.nextInt(palette.size)],
             audioFilename = filename,
