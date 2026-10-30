@@ -829,7 +829,7 @@ class MainActivity : Activity() {
         }
         val scrollContent = ScrollView(this).apply {
             isFillViewport = false
-            addView(content, ScrollView.LayoutParams(-1, -2))
+            addView(content, FrameLayout.LayoutParams(-1, -2))
         }
 
         addSizeControl(content, "اندازه متن یادداشت‌ها", 12, 24, noteSize) { noteSize = it }
