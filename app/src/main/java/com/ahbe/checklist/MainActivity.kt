@@ -31,6 +31,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
 import android.icu.text.SimpleDateFormat
 import android.icu.util.ULocale
@@ -78,6 +79,15 @@ class MainActivity : Activity() {
     private val textFont by lazy { loadTypeface("fonts/far_nazanin.ttf") }
     private val dateFont by lazy { loadTypeface("fonts/a_rooznameh.ttf") }
 
+    // Appearance preferences are kept separately from the user's notes.
+    private var noteTextSize = 15
+    private var inputTextSize = 14
+    private var searchTextSize = 12
+    private var reminderTextSize = 11
+    private var headerTextSize = 25
+    private lateinit var headingLabel: TextView
+    private lateinit var searchField: EditText
+
     private fun loadTypeface(path: String): Typeface =
         runCatching { Typeface.createFromAsset(assets, path) }.getOrDefault(Typeface.DEFAULT)
 
@@ -100,6 +110,7 @@ class MainActivity : Activity() {
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         ReminderEngine.createChannel(this)
         loadNotes()
+        loadAppearanceSettings()
         buildScreen()
         updateDate()
         renderNotes()
@@ -164,7 +175,11 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         headerTop.addView(heading, LinearLayout.LayoutParams(0, -1, 1f))
-        heading.addView(label("یادداشت‌های من", 25f, ink, true))
+        headingLabel = label("یادداشت‌های من", headerTextSize.toFloat(), ink, true).apply {
+            typeface = titleFont
+            maxLines = 1
+        }
+        heading.addView(headingLabel)
 
         val divider = View(this).apply { setBackgroundColor(softBorder) }
         heading.addView(divider, LinearLayout.LayoutParams(dp(1), dp(18)).apply {
@@ -173,6 +188,18 @@ class MainActivity : Activity() {
         })
         dateLabel = label("", 13f, muted, true).apply { typeface = dateFont }
         heading.addView(dateLabel)
+
+        val settingsButton = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_settings)
+            imageTintList = ColorStateList.valueOf(muted)
+            background = shape(Color.rgb(248, 250, 252), 10, softBorder)
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            contentDescription = "تنظیمات"
+            setOnClickListener { showAppearanceSettings() }
+        }
+        heading.addView(settingsButton, LinearLayout.LayoutParams(dp(34), dp(34)).apply {
+            marginStart = dp(7)
+        })
 
         val progressBlock = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -200,9 +227,9 @@ class MainActivity : Activity() {
             topMargin = dp(12)
         })
 
-        val searchInput = EditText(this).apply {
+        searchField = EditText(this).apply {
             hint = "جستجوی یادداشت..."
-            textSize = 13f
+            textSize = searchTextSize.toFloat()
             setTextColor(ink)
             setHintTextColor(Color.rgb(148, 163, 184))
             background = shape(Color.rgb(248, 250, 252), 12, softBorder)
@@ -211,11 +238,11 @@ class MainActivity : Activity() {
             compoundDrawablePadding = dp(6)
             setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0)
         }
-        searchInput.typeface = textFont
-        searchAndFilters.addView(searchInput, LinearLayout.LayoutParams(0, dp(41), 1f).apply {
+        searchField.typeface = textFont
+        searchAndFilters.addView(searchField, LinearLayout.LayoutParams(0, dp(41), 1f).apply {
             marginEnd = dp(10)
         })
-        searchInput.addTextChangedListener(object : TextWatcher {
+        searchField.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 search = s?.toString()?.trim().orEmpty()
@@ -296,7 +323,7 @@ class MainActivity : Activity() {
         })
         input = EditText(this).apply {
             hint = "یک کار جدید بنویس..."
-            textSize = 15f
+            textSize = inputTextSize.toFloat()
             setTextColor(ink)
             setHintTextColor(Color.rgb(148, 163, 184))
             background = null
@@ -420,7 +447,8 @@ class MainActivity : Activity() {
 
         val noteTextColumn = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         tapArea.addView(noteTextColumn, LinearLayout.LayoutParams(0, -2, 1f))
-        val noteText = label(note.text, 17f, if (note.completed) muted else ink, !note.completed).apply {
+        val noteText = label(note.text, noteTextSize.toFloat(), if (note.completed) muted else ink, !note.completed).apply {
+            typeface = textFont
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
             if (note.completed) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
@@ -430,8 +458,12 @@ class MainActivity : Activity() {
         if (reminderTime != null && reminderTime > System.currentTimeMillis()) {
             val scheduled = SimpleDateFormat("d MMMM yyyy، HH:mm",
                 ULocale("fa_IR@calendar=persian")).format(Date(reminderTime))
-            noteTextColumn.addView(label("یادآوری: " + scheduled, 12f, indigo),
-                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+            noteTextColumn.addView(
+                label("یادآوری: " + scheduled, reminderTextSize.toFloat(), indigo).apply {
+                    typeface = textFont
+                },
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) }
+            )
         }
         val bell = ImageButton(this).apply {
             setImageResource(R.drawable.ic_bell)
@@ -695,6 +727,142 @@ class MainActivity : Activity() {
                     .show()
             }
         }
+    }
+
+
+    private fun loadAppearanceSettings() {
+        val prefs = getSharedPreferences("checklist_appearance", MODE_PRIVATE)
+        noteTextSize = prefs.getInt("noteTextSize", 15).coerceIn(12, 24)
+        inputTextSize = prefs.getInt("inputTextSize", 14).coerceIn(12, 22)
+        searchTextSize = prefs.getInt("searchTextSize", 12).coerceIn(10, 18)
+        reminderTextSize = prefs.getInt("reminderTextSize", 11).coerceIn(9, 16)
+        headerTextSize = prefs.getInt("headerTextSize", 25).coerceIn(18, 30)
+    }
+
+    private fun saveAppearanceSettings() {
+        getSharedPreferences("checklist_appearance", MODE_PRIVATE).edit()
+            .putInt("noteTextSize", noteTextSize)
+            .putInt("inputTextSize", inputTextSize)
+            .putInt("searchTextSize", searchTextSize)
+            .putInt("reminderTextSize", reminderTextSize)
+            .putInt("headerTextSize", headerTextSize)
+            .apply()
+    }
+
+    private fun applyAppearanceSettings() {
+        if (::headingLabel.isInitialized) {
+            headingLabel.textSize = headerTextSize.toFloat()
+            headingLabel.typeface = titleFont
+        }
+        if (::searchField.isInitialized) {
+            searchField.textSize = searchTextSize.toFloat()
+            searchField.typeface = textFont
+        }
+        if (::input.isInitialized) {
+            input.textSize = inputTextSize.toFloat()
+            input.typeface = textFont
+        }
+        if (::noteList.isInitialized) renderNotes()
+    }
+
+    private fun addSizeControl(
+        container: LinearLayout,
+        title: String,
+        minValue: Int,
+        maxValue: Int,
+        currentValue: Int,
+        onValueChanged: (Int) -> Unit
+    ) {
+        val block = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(0, dp(7), 0, dp(5))
+        }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(label(title, 14f, ink, true),
+            LinearLayout.LayoutParams(0, -2, 1f))
+        val valueLabel = label(fa(currentValue) + " sp", 12f, indigo, true)
+        header.addView(valueLabel, LinearLayout.LayoutParams(-2, -2))
+        block.addView(header, LinearLayout.LayoutParams(-1, -2))
+
+        val slider = SeekBar(this).apply {
+            max = maxValue - minValue
+            progress = (currentValue - minValue).coerceIn(0, max)
+            progressTintList = ColorStateList.valueOf(indigo)
+            thumbTintList = ColorStateList.valueOf(indigo)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(
+                    seekBar: SeekBar?,
+                    progress: Int,
+                    fromUser: Boolean
+                ) {
+                    val selected = minValue + progress
+                    valueLabel.text = fa(selected) + " sp"
+                    onValueChanged(selected)
+                }
+
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+            })
+        }
+        block.addView(slider, LinearLayout.LayoutParams(-1, dp(38)))
+        container.addView(block, LinearLayout.LayoutParams(-1, -2))
+        container.addView(View(this).apply { setBackgroundColor(softBorder) },
+            LinearLayout.LayoutParams(-1, dp(1)))
+    }
+
+    private fun showAppearanceSettings() {
+        var noteSize = noteTextSize
+        var inputSize = inputTextSize
+        var searchSize = searchTextSize
+        var reminderSize = reminderTextSize
+        var headerSize = headerTextSize
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(20), dp(5), dp(20), dp(8))
+        }
+        val scrollContent = ScrollView(this).apply {
+            isFillViewport = false
+            addView(content, ScrollView.LayoutParams(-1, -2))
+        }
+
+        addSizeControl(content, "اندازه متن یادداشت‌ها", 12, 24, noteSize) { noteSize = it }
+        addSizeControl(content, "اندازه متن افزودن کار", 12, 22, inputSize) { inputSize = it }
+        addSizeControl(content, "اندازه متن جست‌وجو", 10, 18, searchSize) { searchSize = it }
+        addSizeControl(content, "اندازه متن یادآوری", 9, 16, reminderSize) { reminderSize = it }
+        addSizeControl(content, "اندازه عنوان برنامه", 18, 30, headerSize) { headerSize = it }
+
+        AlertDialog.Builder(this)
+            .setTitle("تنظیمات")
+            .setView(scrollContent)
+            .setNegativeButton("انصراف", null)
+            .setNeutralButton("بازگشت به پیش‌فرض") { _, _ ->
+                noteTextSize = 15
+                inputTextSize = 14
+                searchTextSize = 12
+                reminderTextSize = 11
+                headerTextSize = 25
+                saveAppearanceSettings()
+                applyAppearanceSettings()
+                Toast.makeText(this, "اندازه‌ها به حالت پیش‌فرض برگشتند", Toast.LENGTH_SHORT).show()
+            }
+            .setPositiveButton("ذخیره تغییرات") { _, _ ->
+                noteTextSize = noteSize
+                inputTextSize = inputSize
+                searchTextSize = searchSize
+                reminderTextSize = reminderSize
+                headerTextSize = headerSize
+                saveAppearanceSettings()
+                applyAppearanceSettings()
+                Toast.makeText(this, "تنظیمات ظاهری ذخیره شد", Toast.LENGTH_SHORT).show()
+            }
+            .show()
     }
 
     private fun loadNotes() {
