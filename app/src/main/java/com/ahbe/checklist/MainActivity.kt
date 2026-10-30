@@ -1,10 +1,12 @@
 package com.ahbe.checklist
 
+import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.TimePickerDialog
 import android.app.AlarmManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -17,7 +19,12 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.media.MediaPlayer
+import android.media.MediaRecorder
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.text.Editable
 import android.text.TextUtils
 import android.text.TextWatcher
@@ -35,6 +42,7 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.icu.text.SimpleDateFormat
 import android.icu.util.ULocale
+import java.io.File
 import java.util.Date
 import org.json.JSONArray
 import org.json.JSONObject
@@ -52,7 +60,9 @@ class MainActivity : Activity() {
         var completed: Boolean,
         val color: Int,
         var reminderAt: Long? = null,
-        var calendarEventId: Long? = null
+        var calendarEventId: Long? = null,
+        val audioFilename: String? = null,
+        val audioDurationMs: Long = 0L
     )
 
     private enum class Filter { ALL, ACTIVE, COMPLETED }
@@ -99,6 +109,26 @@ class MainActivity : Activity() {
     private lateinit var scroll: ScrollView
     private lateinit var input: EditText
     private val filterButtons = mutableMapOf<Filter, TextView>()
+    private lateinit var microphoneButton: ImageButton
+    private lateinit var cancelAudioButton: ImageButton
+    private lateinit var sendButton: ImageButton
+    private lateinit var voiceStatus: TextView
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private var recorder: MediaRecorder? = null
+    private var recordingFilename: String? = null
+    private var recordingStartedAt = 0L
+    private var pendingVoiceFilename: String? = null
+    private var pendingVoiceDurationMs = 0L
+    private var voicePlayer: MediaPlayer? = null
+    private var playingNoteId: String? = null
+    private val voiceTicker = object : Runnable {
+        override fun run() {
+            if (recorder == null) return
+            voiceStatus.text = "در حال ضبط • " +
+                formatDuration(SystemClock.elapsedRealtime() - recordingStartedAt)
+            uiHandler.postDelayed(this, 400L)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -122,6 +152,25 @@ class MainActivity : Activity() {
             updateDate()
             ReminderEngine.restore(this)
         }
+    }
+
+    override fun onStop() {
+        if (recorder != null) finishVoiceRecording()
+        stopPlayback()
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        uiHandler.removeCallbacks(voiceTicker)
+        if (recorder != null) {
+            runCatching { recorder?.stop() }
+            runCatching { recorder?.release() }
+            recorder = null
+            recordingFilename?.let { storedAudioFile(it)?.delete() }
+        }
+        pendingVoiceFilename?.let { storedAudioFile(it)?.delete() }
+        stopPlayback()
+        super.onDestroy()
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
@@ -339,7 +388,43 @@ class MainActivity : Activity() {
         }
         input.typeface = textFont
         bottom.addView(input, LinearLayout.LayoutParams(0, -1, 1f))
-        val add = ImageButton(this).apply {
+
+        voiceStatus = label("", inputTextSize.toFloat(), muted).apply {
+            visibility = View.GONE
+            typeface = textFont
+            gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
+            setPadding(dp(12), 0, dp(10), 0)
+        }
+        bottom.addView(voiceStatus, LinearLayout.LayoutParams(0, -1, 1f))
+
+        microphoneButton = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_microphone)
+            imageTintList = ColorStateList.valueOf(muted)
+            background = shape(Color.rgb(243, 246, 249), 12)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            contentDescription = "ضبط پیام صوتی"
+            setOnClickListener { onMicrophoneClicked() }
+        }
+        bottom.addView(microphoneButton, LinearLayout.LayoutParams(dp(43), dp(43)).apply {
+            marginStart = dp(5)
+        })
+
+        cancelAudioButton = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_close)
+            imageTintList = ColorStateList.valueOf(muted)
+            background = shape(Color.rgb(249, 241, 240), 11)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            contentDescription = "لغو ضبط صدا"
+            setOnClickListener { discardVoiceRecording() }
+            visibility = View.GONE
+        }
+        bottom.addView(cancelAudioButton, LinearLayout.LayoutParams(dp(39), dp(39)).apply {
+            marginStart = dp(5)
+        })
+
+        sendButton = ImageButton(this).apply {
             setImageResource(R.drawable.ic_arrow_up)
             imageTintList = ColorStateList.valueOf(Color.WHITE)
             background = shape(ink, 12)
@@ -348,7 +433,8 @@ class MainActivity : Activity() {
             contentDescription = "افزودن یادداشت"
             setOnClickListener { addNote() }
         }
-        bottom.addView(add, LinearLayout.LayoutParams(dp(45), dp(45)))
+        bottom.addView(sendButton, LinearLayout.LayoutParams(dp(45), dp(45)))
+        refreshVoiceComposer()
     }
 
     private fun updateFilters() {
@@ -454,6 +540,27 @@ class MainActivity : Activity() {
             if (note.completed) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
         }
         noteTextColumn.addView(noteText, LinearLayout.LayoutParams(-1, -2))
+        if (note.audioFilename != null) {
+            val playback = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(3), 0, 0)
+            }
+            val isPlaying = playingNoteId == note.id
+            val play = ImageButton(this).apply {
+                setImageResource(if (isPlaying) R.drawable.ic_pause_voice else R.drawable.ic_play_voice)
+                imageTintList = ColorStateList.valueOf(indigo)
+                background = shape(Color.rgb(234, 237, 252), 9)
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                contentDescription = if (isPlaying) "توقف پخش" else "پخش پیام صوتی"
+                setOnClickListener { toggleVoicePlayback(note) }
+            }
+            playback.addView(play, LinearLayout.LayoutParams(dp(35), dp(35)))
+            playback.addView(label(formatDuration(note.audioDurationMs), 12f, muted),
+                LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
+            noteTextColumn.addView(playback, LinearLayout.LayoutParams(-1, -2))
+        }
         val reminderTime = note.reminderAt
         if (reminderTime != null && reminderTime > System.currentTimeMillis()) {
             val scheduled = SimpleDateFormat("d MMMM yyyy، HH:mm",
@@ -490,6 +597,8 @@ class MainActivity : Activity() {
                     .withEndAction {
                         ReminderEngine.cancel(this@MainActivity, note.id)
                         PhoneCalendarStore.deleteEvent(this@MainActivity, note.calendarEventId)
+                        if (playingNoteId == note.id) stopPlayback()
+                        note.audioFilename?.let { storedAudioFile(it)?.delete() }
                         notes.removeAll { it.id == note.id }
                         saveNotes()
                         renderNotes()
@@ -502,6 +611,11 @@ class MainActivity : Activity() {
     }
 
     private fun addNote() {
+        if (recorder != null) finishVoiceRecording()
+        if (pendingVoiceFilename != null) {
+            submitVoiceNote()
+            return
+        }
         val text = input.text.toString().trim()
         if (text.isEmpty()) return
         notes.add(Note(UUID.randomUUID().toString(), text, false, palette[Random.nextInt(palette.size)]))
@@ -654,6 +768,14 @@ class MainActivity : Activity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 912) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                startVoiceRecording()
+            } else {
+                Toast.makeText(this, "برای ضبط صدا اجازه میکروفون لازم است", Toast.LENGTH_LONG).show()
+            }
+            return
+        }
         if (requestCode == 811) {
             val noteId = pendingPermissionNoteId
             pendingPermissionNoteId = null
@@ -729,6 +851,200 @@ class MainActivity : Activity() {
         }
     }
 
+
+    private fun formatDuration(durationMs: Long): String {
+        val totalSeconds = (durationMs.coerceAtLeast(0L) / 1000L)
+        return fa((totalSeconds / 60L).toInt()) + ":" +
+            fa((totalSeconds % 60L).toString().padStart(2, '0').toInt())
+                .padStart(2, '۰')
+    }
+
+    // Only generated file names are accepted. Audio is never exposed to public storage.
+    private fun storedAudioFile(filename: String): File? {
+        if (!Regex("^[0-9a-fA-F-]{36}\\.m4a$").matches(filename)) return null
+        return File(File(filesDir, "voice_notes"), filename)
+    }
+
+    private fun refreshVoiceComposer() {
+        if (!::voiceStatus.isInitialized) return
+        val isRecording = recorder != null
+        val hasDraft = pendingVoiceFilename != null
+        val active = isRecording || hasDraft
+        input.visibility = if (active) View.GONE else View.VISIBLE
+        voiceStatus.visibility = if (active) View.VISIBLE else View.GONE
+        cancelAudioButton.visibility = if (active) View.VISIBLE else View.GONE
+        microphoneButton.isEnabled = !hasDraft
+        microphoneButton.setImageResource(
+            if (isRecording) R.drawable.ic_stop_voice else R.drawable.ic_microphone
+        )
+        microphoneButton.imageTintList = ColorStateList.valueOf(
+            if (isRecording) Color.WHITE else muted
+        )
+        microphoneButton.background = shape(
+            if (isRecording) Color.rgb(208, 65, 69) else Color.rgb(243, 246, 249), 12
+        )
+        microphoneButton.contentDescription =
+            if (isRecording) "توقف ضبط" else "ضبط پیام صوتی"
+        sendButton.contentDescription = if (active) "ارسال پیام صوتی" else "افزودن یادداشت"
+        if (hasDraft) {
+            voiceStatus.text = "صدا آماده ارسال • " + formatDuration(pendingVoiceDurationMs)
+        } else if (isRecording) {
+            voiceStatus.text = "در حال ضبط • " +
+                formatDuration(SystemClock.elapsedRealtime() - recordingStartedAt)
+        }
+    }
+
+    private fun onMicrophoneClicked() {
+        if (recorder != null) {
+            finishVoiceRecording()
+            return
+        }
+        if (pendingVoiceFilename != null) return
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 912)
+            return
+        }
+        startVoiceRecording()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun startVoiceRecording() {
+        if (recorder != null || pendingVoiceFilename != null) return
+        stopPlayback()
+        val directory = File(filesDir, "voice_notes")
+        if (!directory.exists() && !directory.mkdirs()) {
+            Toast.makeText(this, "امکان ذخیره صدا وجود ندارد", Toast.LENGTH_LONG).show()
+            return
+        }
+        val filename = UUID.randomUUID().toString() + ".m4a"
+        val file = storedAudioFile(filename) ?: return
+        var newRecorder: MediaRecorder? = null
+        try {
+            newRecorder = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else MediaRecorder()
+            newRecorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+            newRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            newRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            newRecorder.setAudioEncodingBitRate(64000)
+            newRecorder.setAudioSamplingRate(44100)
+            newRecorder.setOutputFile(file.absolutePath)
+            newRecorder.prepare()
+            newRecorder.start()
+            recorder = newRecorder
+            recordingFilename = filename
+            recordingStartedAt = SystemClock.elapsedRealtime()
+            refreshVoiceComposer()
+            uiHandler.post(voiceTicker)
+        } catch (_: Exception) {
+            runCatching { newRecorder?.release() }
+            file.delete()
+            Toast.makeText(this, "میکروفون در دسترس نیست یا ضبط انجام نشد", Toast.LENGTH_LONG).show()
+            refreshVoiceComposer()
+        }
+    }
+
+    private fun finishVoiceRecording() {
+        val currentRecorder = recorder ?: return
+        val filename = recordingFilename
+        val duration = SystemClock.elapsedRealtime() - recordingStartedAt
+        recorder = null
+        recordingFilename = null
+        uiHandler.removeCallbacks(voiceTicker)
+        val completed = runCatching { currentRecorder.stop() }.isSuccess
+        runCatching { currentRecorder.release() }
+        val file = filename?.let { storedAudioFile(it) }
+        if (!completed || file == null || !file.isFile || file.length() < 512L) {
+            file?.delete()
+            Toast.makeText(this, "ضبط صدا کامل نشد. دوباره امتحان کنید", Toast.LENGTH_LONG).show()
+        } else {
+            pendingVoiceFilename = filename
+            pendingVoiceDurationMs = duration
+        }
+        refreshVoiceComposer()
+    }
+
+    private fun discardVoiceRecording() {
+        if (recorder != null) {
+            val currentRecorder = recorder
+            recorder = null
+            uiHandler.removeCallbacks(voiceTicker)
+            runCatching { currentRecorder?.stop() }
+            runCatching { currentRecorder?.release() }
+            recordingFilename?.let { storedAudioFile(it)?.delete() }
+            recordingFilename = null
+        }
+        pendingVoiceFilename?.let { storedAudioFile(it)?.delete() }
+        pendingVoiceFilename = null
+        pendingVoiceDurationMs = 0L
+        refreshVoiceComposer()
+    }
+
+    private fun submitVoiceNote() {
+        val filename = pendingVoiceFilename ?: return
+        val file = storedAudioFile(filename)
+        if (file == null || !file.isFile || file.length() == 0L) {
+            discardVoiceRecording()
+            Toast.makeText(this, "فایل صدای ضبط‌شده پیدا نشد", Toast.LENGTH_LONG).show()
+            return
+        }
+        notes.add(Note(
+            UUID.randomUUID().toString(),
+            "پیام صوتی",
+            false,
+            palette[Random.nextInt(palette.size)],
+            audioFilename = filename,
+            audioDurationMs = pendingVoiceDurationMs
+        ))
+        saveNotes()
+        pendingVoiceFilename = null
+        pendingVoiceDurationMs = 0L
+        refreshVoiceComposer()
+        if (filter != Filter.ALL) {
+            filter = Filter.ALL
+            updateFilters()
+        }
+        renderNotes()
+        scroll.post { scroll.smoothScrollTo(0, noteList.bottom) }
+    }
+
+    private fun stopPlayback() {
+        val previous = voicePlayer
+        voicePlayer = null
+        playingNoteId = null
+        if (previous != null) {
+            runCatching { previous.stop() }
+            runCatching { previous.release() }
+        }
+    }
+
+    private fun toggleVoicePlayback(note: Note) {
+        if (playingNoteId == note.id) {
+            stopPlayback()
+            renderNotes()
+            return
+        }
+        stopPlayback()
+        val file = note.audioFilename?.let { storedAudioFile(it) }
+        if (file == null || !file.isFile) {
+            Toast.makeText(this, "فایل صوتی موجود نیست", Toast.LENGTH_LONG).show()
+            return
+        }
+        val player = MediaPlayer()
+        try {
+            player.setDataSource(file.absolutePath)
+            player.prepare()
+            player.setOnCompletionListener {
+                stopPlayback()
+                renderNotes()
+            }
+            player.start()
+            voicePlayer = player
+            playingNoteId = note.id
+            renderNotes()
+        } catch (_: Exception) {
+            runCatching { player.release() }
+            Toast.makeText(this, "پخش صدا انجام نشد", Toast.LENGTH_LONG).show()
+        }
+    }
 
     private fun loadAppearanceSettings() {
         val prefs = getSharedPreferences("checklist_appearance", MODE_PRIVATE)
@@ -878,7 +1194,9 @@ class MainActivity : Activity() {
                     obj.optBoolean("completed", false),
                     obj.optInt("color", palette[i % palette.size]),
                     obj.optLong("reminderAt", 0L).takeIf { it > 0L },
-                    obj.optLong("calendarEventId", 0L).takeIf { it > 0L }
+                    obj.optLong("calendarEventId", 0L).takeIf { it > 0L },
+                    obj.optString("audioFilename", "").takeIf { it.isNotEmpty() },
+                    obj.optLong("audioDurationMs", 0L).coerceAtLeast(0L)
                 ))
             }
         }
@@ -894,6 +1212,8 @@ class MainActivity : Activity() {
                 put("color", it.color)
                 put("reminderAt", it.reminderAt ?: 0L)
                 put("calendarEventId", it.calendarEventId ?: 0L)
+                put("audioFilename", it.audioFilename ?: "")
+                put("audioDurationMs", it.audioDurationMs)
             })
         }
         getSharedPreferences("checklist_native", MODE_PRIVATE)
