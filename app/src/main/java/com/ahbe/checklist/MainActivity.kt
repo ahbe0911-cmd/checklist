@@ -828,6 +828,11 @@ class MainActivity : Activity() {
             if (note.completed) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
         }
         noteTextColumn.addView(noteText, LinearLayout.LayoutParams(-1, -2))
+        note.dueAt?.let { due ->
+            noteTextColumn.addView(label("تاریخ اجرا: " + formatDueDate(due), 12f,
+                Color.rgb(195, 45, 52), true).apply { typeface = textFont },
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) })
+        }
         val countChildren = notes.count { it.parentId == note.id }
         if (countChildren > 0 || note.imageFilenames.isNotEmpty() || note.audioAttachments.isNotEmpty()) {
             noteTextColumn.addView(
@@ -946,6 +951,79 @@ class MainActivity : Activity() {
         note.audioAttachments.forEach { storedAudioFile(it.filename)?.delete() }
         note.imageFilenames.forEach { storedImageFile(it)?.delete() }
         notes.removeAll { it.id == note.id }
+    }
+
+
+    private fun formatDueDate(time: Long): String =
+        SimpleDateFormat("yyyy/MM/dd", ULocale("fa_IR@calendar=persian")).format(Date(time))
+
+    /** Execution date is shown in red and does not create an alarm. */
+    private fun showPersianDatePicker(initialAt: Long?, onPick: (Long?) -> Unit) {
+        val months = arrayOf("فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
+            "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند")
+        val now = PersianIcuCalendar.getInstance(ULocale("fa_IR@calendar=persian"))
+        val selected = PersianIcuCalendar.getInstance(ULocale("fa_IR@calendar=persian"))
+        if (initialAt != null) selected.timeInMillis = initialAt
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.CENTER
+            setPadding(dp(9), dp(12), dp(9), dp(4))
+        }
+        val currentYear = now.get(PersianIcuCalendar.YEAR)
+        val year = NumberPicker(this).apply {
+            minValue = currentYear - 5
+            maxValue = currentYear + 15
+            value = selected.get(PersianIcuCalendar.YEAR).coerceIn(minValue, maxValue)
+            wrapSelectorWheel = false
+            descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
+        }
+        val month = NumberPicker(this).apply {
+            minValue = 1
+            maxValue = 12
+            displayedValues = months
+            value = selected.get(PersianIcuCalendar.MONTH) + 1
+            wrapSelectorWheel = false
+            descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
+        }
+        val day = NumberPicker(this).apply {
+            minValue = 1
+            maxValue = 31
+            value = selected.get(PersianIcuCalendar.DAY_OF_MONTH)
+            wrapSelectorWheel = false
+            descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
+        }
+        fun limitDay() {
+            val temp = PersianIcuCalendar.getInstance(ULocale("fa_IR@calendar=persian"))
+            temp.clear()
+            temp.set(year.value, month.value - 1, 1, 12, 0, 0)
+            val max = temp.getActualMaximum(PersianIcuCalendar.DAY_OF_MONTH)
+            day.maxValue = max
+            if (day.value > max) day.value = max
+        }
+        year.setOnValueChangedListener { _, _, _ -> limitDay() }
+        month.setOnValueChangedListener { _, _, _ -> limitDay() }
+        limitDay()
+        row.addView(day, LinearLayout.LayoutParams(0, dp(152), 1f))
+        row.addView(month, LinearLayout.LayoutParams(0, dp(152), 1.5f))
+        row.addView(year, LinearLayout.LayoutParams(0, dp(152), 1.2f))
+        AlertDialog.Builder(this)
+            .setTitle("تاریخ اجرای کار (شمسی)")
+            .setView(row)
+            .setNegativeButton("انصراف", null)
+            .setNeutralButton("حذف تاریخ") { _, _ -> onPick(null) }
+            .setPositiveButton("ثبت تاریخ") { _, _ ->
+                val date = PersianIcuCalendar.getInstance(ULocale("fa_IR@calendar=persian"))
+                date.isLenient = false
+                date.clear()
+                date.set(year.value, month.value - 1, day.value, 12, 0, 0)
+                val timestamp = runCatching { date.timeInMillis }.getOrNull()
+                if (timestamp == null) {
+                    Toast.makeText(this, "تاریخ نامعتبر است", Toast.LENGTH_LONG).show()
+                } else {
+                    onPick(timestamp)
+                }
+            }.show()
     }
 
     private fun actionLabel(text: String, callback: () -> Unit): TextView =
