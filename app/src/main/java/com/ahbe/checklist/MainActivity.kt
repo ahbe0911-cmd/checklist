@@ -712,6 +712,8 @@ class MainActivity : Activity() {
                     if (position >= 0) categories[position] = title
                     notes.filter { it.category == oldName }.forEach { it.category = title }
                     if (selectedCategory == oldName) selectedCategory = title
+                    tabStyles[title] = tabStyles.remove(oldName) ?: defaultTabStyle(oldName)
+                    saveTabStyles()
                     saveNotes()
                     saveCategories()
                     refreshCategoriesAfterEdit()
@@ -736,6 +738,8 @@ class MainActivity : Activity() {
                 .setNegativeButton("انصراف", null)
                 .setPositiveButton("حذف") { _, _ ->
                     categories.remove(name)
+                    tabStyles.remove(name)
+                    saveTabStyles()
                     if (selectedCategory == name) selectedCategory = categories.first()
                     saveCategories()
                     refreshCategoriesAfterEdit()
@@ -759,6 +763,8 @@ class MainActivity : Activity() {
                     .setPositiveButton("انتقال و حذف") { _, _ ->
                         notes.filter { it.category == name }.forEach { it.category = destination }
                         categories.remove(name)
+                        tabStyles.remove(name)
+                        saveTabStyles()
                         if (selectedCategory == name) selectedCategory = destination
                         saveNotes()
                         saveCategories()
@@ -766,6 +772,91 @@ class MainActivity : Activity() {
                         showCategoryManager()
                     }.show()
             }.show()
+    }
+
+    private fun showCategoryAppearance(name: String) {
+        val current = styleForCategory(name)
+        val outer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(20), dp(12), dp(20), dp(8))
+        }
+        val preview = label(name, 17f, tabColors[current.colorIndex], true).apply {
+            typeface = titleFont
+            gravity = Gravity.CENTER
+            background = shape(Color.rgb(246, 247, 251), 14, softBorder)
+        }
+        outer.addView(preview, LinearLayout.LayoutParams(-1, dp(48)))
+        var selectedColor = current.colorIndex
+        var selectedIcon = current.iconIndex
+        fun previewSelection() {
+            val tone = tabColors[selectedColor]
+            preview.setTextColor(tone)
+            preview.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                tabIcons[selectedIcon], 0, 0, 0
+            )
+            preview.compoundDrawableTintList = ColorStateList.valueOf(tone)
+            preview.compoundDrawablePadding = dp(8)
+        }
+        previewSelection()
+        outer.addView(label("رنگ سربرگ", 13f, ink, true),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
+        val colors = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        outer.addView(colors, LinearLayout.LayoutParams(-1, dp(49)))
+        for (i in tabColors.indices) {
+            val index = i
+            val color = tabColors[i]
+            val swatch = FrameLayout(this).apply {
+                background = shape(color, 15)
+                contentDescription = tabColorNames[index]
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    selectedColor = index
+                    previewSelection()
+                }
+            }
+            colors.addView(swatch, LinearLayout.LayoutParams(0, dp(28), 1f).apply {
+                marginStart = dp(4)
+                marginEnd = dp(4)
+            })
+        }
+        outer.addView(label("آیکن سربرگ", 13f, ink, true),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(13) })
+        val icons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        outer.addView(icons, LinearLayout.LayoutParams(-1, dp(50)))
+        for (i in tabIcons.indices) {
+            val index = i
+            icons.addView(ImageView(this).apply {
+                setImageResource(tabIcons[index])
+                imageTintList = ColorStateList.valueOf(tabColors[selectedColor])
+                setPadding(dp(7), dp(7), dp(7), dp(7))
+                contentDescription = tabIconNames[index]
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    selectedIcon = index
+                    previewSelection()
+                }
+            }, LinearLayout.LayoutParams(0, dp(45), 1f))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("ظاهر سربرگ «" + name + "»")
+            .setView(outer)
+            .setNegativeButton("انصراف", null)
+            .setPositiveButton("ذخیره") { _, _ ->
+                tabStyles[name] = TabStyle(selectedColor, selectedIcon)
+                saveTabStyles()
+                refreshCategoriesAfterEdit()
+                showCategoryManager()
+            }
+            .show()
     }
 
     private fun showCategoryManager() {
@@ -784,8 +875,23 @@ class MainActivity : Activity() {
                 setPadding(dp(4), dp(5), dp(4), dp(5))
             }
             items.addView(row, LinearLayout.LayoutParams(-1, -2))
-            row.addView(label(category, 15f, ink, true),
-                LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(label(category, 15f, tabColors[styleForCategory(category).colorIndex], true).apply {
+                typeface = titleFont
+                setCompoundDrawablesRelativeWithIntrinsicBounds(
+                    tabIcons[styleForCategory(category).iconIndex], 0, 0, 0
+                )
+                compoundDrawableTintList = ColorStateList.valueOf(
+                    tabColors[styleForCategory(category).colorIndex])
+                compoundDrawablePadding = dp(6)
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(label("ظاهر", 12f, indigo, true).apply {
+                typeface = titleFont
+                setPadding(dp(7), dp(12), dp(7), dp(12))
+                setOnClickListener {
+                    dialog.dismiss()
+                    showCategoryAppearance(category)
+                }
+            })
             row.addView(label("ویرایش", 12f, indigo, true).apply {
                 setPadding(dp(9), dp(12), dp(9), dp(12))
                 setOnClickListener {
@@ -826,6 +932,8 @@ class MainActivity : Activity() {
                 val name = normalizedCategoryName(nameInput.text.toString())
                     ?: return@setOnClickListener
                 categories.add(name)
+                tabStyles[name] = defaultTabStyle(name)
+                saveTabStyles()
                 selectedCategory = name
                 saveCategories()
                 refreshCategoriesAfterEdit()
