@@ -244,7 +244,7 @@ class MainActivity : Activity() {
         header.addView(headerTop, LinearLayout.LayoutParams(-1, dp(49)))
 
         val heading = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+            orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
         }
         headerTop.addView(heading, LinearLayout.LayoutParams(0, -1, 1f))
@@ -254,11 +254,6 @@ class MainActivity : Activity() {
         }
         heading.addView(headingLabel)
 
-        val divider = View(this).apply { setBackgroundColor(softBorder) }
-        heading.addView(divider, LinearLayout.LayoutParams(dp(1), dp(18)).apply {
-            marginStart = dp(10)
-            marginEnd = dp(10)
-        })
         dateLabel = label("", 13f, muted, true).apply { typeface = dateFont }
         heading.addView(dateLabel)
 
@@ -303,8 +298,7 @@ class MainActivity : Activity() {
         val categoryScroll = android.widget.HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             isFillViewport = true
-            addView(categoryBar, android.widget.HorizontalScrollView.LayoutParams(
-                -2, dp(47)))
+            addView(categoryBar, FrameLayout.LayoutParams(-1, dp(47)))
         }
         header.addView(categoryScroll, LinearLayout.LayoutParams(-1, dp(47)).apply {
             topMargin = dp(11)
@@ -512,9 +506,10 @@ class MainActivity : Activity() {
                     renderNotes()
                 }
             }
-            categoryBar.addView(tab, LinearLayout.LayoutParams(-2, -1).apply {
-                marginEnd = dp(4)
-            })
+            categoryBar.addView(tab, (
+                if (categories.size <= 3) LinearLayout.LayoutParams(0, -1, 1f)
+                else LinearLayout.LayoutParams(-2, -1)
+            ).apply { marginEnd = dp(4) })
             categoryButtons[category] = tab
         }
         updateCategories()
