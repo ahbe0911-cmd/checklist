@@ -54,6 +54,8 @@ import kotlin.random.Random
  * No HTML, JavaScript, WebView, network permission, or third-party runtime.
  */
 class MainActivity : Activity() {
+    private data class AudioAttachment(val filename: String, val title: String, val durationMs: Long)
+
     private data class Note(
         val id: String,
         val text: String,
@@ -62,7 +64,11 @@ class MainActivity : Activity() {
         var reminderAt: Long? = null,
         var calendarEventId: Long? = null,
         val audioFilename: String? = null,
-        val audioDurationMs: Long = 0L
+        val audioDurationMs: Long = 0L,
+        var category: String = "کتابخانه",
+        var parentId: String? = null,
+        val imageFilenames: MutableList<String> = mutableListOf(),
+        val audioAttachments: MutableList<AudioAttachment> = mutableListOf()
     )
 
     private enum class Filter { ALL, ACTIVE, COMPLETED }
@@ -82,6 +88,11 @@ class MainActivity : Activity() {
         Color.rgb(245, 247, 249)
     )
     private val notes = mutableListOf<Note>()
+    private val categories = listOf("کتابخانه", "کافی‌نت", "دانشگاه")
+    private var selectedCategory = "کتابخانه"
+    private val categoryButtons = mutableMapOf<String, TextView>()
+    private var pickingImageForNoteId: String? = null
+    private var voiceTargetNoteId: String? = null
     private var filter = Filter.ALL
     private var search = ""
     private var pendingPermissionNoteId: String? = null
@@ -145,11 +156,14 @@ class MainActivity : Activity() {
             View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         ReminderEngine.createChannel(this)
+        selectedCategory = getSharedPreferences("checklist_native", MODE_PRIVATE)
+            .getString("active_category", "کتابخانه")?.takeIf { it in categories } ?: "کتابخانه"
         loadNotes()
         loadAppearanceSettings()
         buildScreen()
         updateDate()
         renderNotes()
+        requestInitialPermissions()
     }
 
     override fun onResume() {
@@ -273,6 +287,34 @@ class MainActivity : Activity() {
         progressBlock.addView(progressBar, LinearLayout.LayoutParams(-1, dp(5)).apply {
             topMargin = dp(8)
         })
+
+        val categoryBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.CENTER
+            background = shape(Color.rgb(244, 246, 251), 13)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+        header.addView(categoryBar, LinearLayout.LayoutParams(-1, dp(47)).apply {
+            topMargin = dp(11)
+        })
+        categories.forEach { category ->
+            val tab = label(category, 15f, ink, true).apply {
+                gravity = Gravity.CENTER
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    selectedCategory = category
+                    getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
+                        .putString("active_category", category).apply()
+                    updateCategories()
+                    renderNotes()
+                }
+            }
+            categoryBar.addView(tab, LinearLayout.LayoutParams(0, -1, 1f))
+            categoryButtons[category] = tab
+        }
+        updateCategories()
 
         val searchAndFilters = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -487,6 +529,28 @@ class MainActivity : Activity() {
         refreshVoiceComposer()
     }
 
+    private fun updateCategories() {
+        categoryButtons.forEach { (category, tab) ->
+            val active = category == selectedCategory
+            tab.background = if (active) shape(Color.WHITE, 10, softBorder) else null
+            tab.setTextColor(if (active) indigo else muted)
+            tab.elevation = if (active) dp(2).toFloat() else 0f
+        }
+    }
+
+    private fun requestInitialPermissions() {
+        val prefs = getSharedPreferences("checklist_native", MODE_PRIVATE)
+        if (prefs.getBoolean("initial_permissions_requested", false)) return
+        prefs.edit().putBoolean("initial_permissions_requested", true).apply()
+        val missing = mutableListOf<String>()
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
+            missing.add(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            missing.add(Manifest.permission.POST_NOTIFICATIONS)
+        if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), 915)
+    }
+
     private fun updateFilters() {
         filterButtons.forEach { (key, tab) ->
             val selected = key == filter
@@ -505,11 +569,12 @@ class MainActivity : Activity() {
     }.joinToString("")
 
     private fun updateProgress() {
-        val finished = notes.count { it.completed }
-        progressText.text = fa(finished) + " از " + fa(notes.size) + " انجام شده"
-        progressBar.progress = if (notes.isEmpty()) 0 else (finished * 100) / notes.size
+        val current = notes.filter { it.category == selectedCategory }
+        val finished = current.count { it.completed }
+        progressText.text = fa(finished) + " از " + fa(current.size) + " انجام شده"
+        progressBar.progress = if (current.isEmpty()) 0 else (finished * 100) / current.size
         progressBar.progressTintList = ColorStateList.valueOf(
-            if (finished == notes.size && notes.isNotEmpty()) emerald else indigo
+            if (finished == current.size && current.isNotEmpty()) emerald else indigo
         )
     }
 
@@ -517,13 +582,14 @@ class MainActivity : Activity() {
         if (!::noteList.isInitialized) return
         noteList.removeAllViews()
         val visible = notes.filter { note ->
-            val searchMatch = note.text.contains(search, ignoreCase = true)
+            val searchMatch = note.text.contains(search, ignoreCase = true) ||
+                notes.any { it.parentId == note.id && it.text.contains(search, ignoreCase = true) }
             val filterMatch = when (filter) {
                 Filter.ALL -> true
                 Filter.ACTIVE -> !note.completed
                 Filter.COMPLETED -> note.completed
             }
-            searchMatch && filterMatch
+            note.category == selectedCategory && note.parentId == null && searchMatch && filterMatch
         }
         emptyState.visibility = if (visible.isEmpty()) View.VISIBLE else View.GONE
         visible.forEachIndexed { index, note -> addNoteCard(note, index + 1) }
@@ -549,18 +615,8 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             isClickable = true
             isFocusable = true
-            contentDescription = (if (note.completed) "لغو انجام " else "انجام ") + note.text
-            setOnClickListener {
-                note.completed = !note.completed
-                if (note.completed && note.reminderAt != null) {
-                    ReminderEngine.cancel(this@MainActivity, note.id)
-                    PhoneCalendarStore.deleteEvent(this@MainActivity, note.calendarEventId)
-                    note.calendarEventId = null
-                    note.reminderAt = null
-                }
-                saveNotes()
-                renderNotes()
-            }
+            contentDescription = "بازکردن یادداشت " + note.text
+            setOnClickListener { showNoteDetail(note) }
         }
         card.addView(tapArea, LinearLayout.LayoutParams(0, -2, 1f))
 
@@ -570,6 +626,9 @@ class MainActivity : Activity() {
         val checkBox = FrameLayout(this).apply {
             background = shape(if (note.completed) emerald else Color.WHITE, 6,
                 if (note.completed) emerald else Color.rgb(203, 213, 225))
+            isClickable = true
+            contentDescription = if (note.completed) "برگرداندن به جاری" else "علامت انجام"
+            setOnClickListener { toggleCompleted(note) }
         }
         tapArea.addView(checkBox, LinearLayout.LayoutParams(dp(22), dp(22)).apply {
             marginEnd = dp(11)
@@ -590,6 +649,15 @@ class MainActivity : Activity() {
             if (note.completed) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
         }
         noteTextColumn.addView(noteText, LinearLayout.LayoutParams(-1, -2))
+        val countChildren = notes.count { it.parentId == note.id }
+        if (countChildren > 0 || note.imageFilenames.isNotEmpty() || note.audioAttachments.isNotEmpty()) {
+            noteTextColumn.addView(
+                label("زیرشاخه: " + fa(countChildren) + "  |  عکس: " +
+                    fa(note.imageFilenames.size) + "  |  صوت: " +
+                    fa(note.audioAttachments.size), 11f, indigo),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) }
+            )
+        }
         if (note.audioFilename != null) {
             val audioBadge = label("یادداشت صوتی", 10f, indigo, true).apply {
                 background = shape(Color.rgb(237, 240, 255), 8)
@@ -626,6 +694,10 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(7) })
             noteTextColumn.addView(playback,
                 LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(5) })
+            noteTextColumn.addView(label("اشتراک‌گذاری صوت", 11f, indigo, true).apply {
+                setPadding(dp(9), dp(7), dp(9), dp(7))
+                setOnClickListener { shareAudio(note.audioFilename) }
+            }, LinearLayout.LayoutParams(-2, -2))
         }
         val reminderTime = note.reminderAt
         if (reminderTime != null && reminderTime > System.currentTimeMillis()) {
@@ -663,9 +735,7 @@ class MainActivity : Activity() {
                     .withEndAction {
                         ReminderEngine.cancel(this@MainActivity, note.id)
                         PhoneCalendarStore.deleteEvent(this@MainActivity, note.calendarEventId)
-                        if (playingNoteId == note.id) stopPlayback()
-                        note.audioFilename?.let { storedAudioFile(it)?.delete() }
-                        notes.removeAll { it.id == note.id }
+                        removeNoteTree(note)
                         saveNotes()
                         renderNotes()
                     }.start()
@@ -684,7 +754,7 @@ class MainActivity : Activity() {
         }
         val text = input.text.toString().trim()
         if (text.isEmpty()) return
-        notes.add(Note(UUID.randomUUID().toString(), text, false, palette[Random.nextInt(palette.size)]))
+        notes.add(Note(UUID.randomUUID().toString(), text, false, palette[Random.nextInt(palette.size)], category = selectedCategory))
         saveNotes()
         input.text.clear()
         if (filter != Filter.ALL) {
@@ -1339,7 +1409,28 @@ class MainActivity : Activity() {
                     obj.optLong("reminderAt", 0L).takeIf { it > 0L },
                     obj.optLong("calendarEventId", 0L).takeIf { it > 0L },
                     obj.optString("audioFilename", "").takeIf { it.isNotEmpty() },
-                    obj.optLong("audioDurationMs", 0L).coerceAtLeast(0L)
+                    obj.optLong("audioDurationMs", 0L).coerceAtLeast(0L),
+                    category = obj.optString("category", "کتابخانه").takeIf { it in categories }
+                        ?: "کتابخانه",
+                    parentId = obj.optString("parentId", "").takeIf { it.isNotEmpty() },
+                    imageFilenames = mutableListOf<String>().apply {
+                        val images = obj.optJSONArray("images") ?: JSONArray()
+                        for (j in 0 until images.length()) {
+                            val name = images.optString(j)
+                            if (Regex("^[0-9a-fA-F-]{36}\\.(jpg|png|webp)$").matches(name)) add(name)
+                        }
+                    },
+                    audioAttachments = mutableListOf<AudioAttachment>().apply {
+                        val audio = obj.optJSONArray("audioAttachments") ?: JSONArray()
+                        for (j in 0 until audio.length()) {
+                            val item = audio.optJSONObject(j) ?: continue
+                            val name = item.optString("filename")
+                            if (Regex("^[0-9a-fA-F-]{36}\\.m4a$").matches(name)) add(
+                                AudioAttachment(name, item.optString("title", "صوت"),
+                                    item.optLong("durationMs", 0L))
+                            )
+                        }
+                    }
                 ))
             }
         }
@@ -1357,6 +1448,16 @@ class MainActivity : Activity() {
                 put("calendarEventId", it.calendarEventId ?: 0L)
                 put("audioFilename", it.audioFilename ?: "")
                 put("audioDurationMs", it.audioDurationMs)
+                put("category", it.category)
+                put("parentId", it.parentId ?: "")
+                put("images", JSONArray().apply { it.imageFilenames.forEach { name -> put(name) } })
+                put("audioAttachments", JSONArray().apply {
+                    it.audioAttachments.forEach { item -> put(JSONObject().apply {
+                        put("filename", item.filename)
+                        put("title", item.title)
+                        put("durationMs", item.durationMs)
+                    }) }
+                })
             })
         }
         getSharedPreferences("checklist_native", MODE_PRIVATE)
