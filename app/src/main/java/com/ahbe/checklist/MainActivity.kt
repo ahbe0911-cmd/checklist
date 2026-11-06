@@ -1344,6 +1344,71 @@ class MainActivity : Activity() {
         updatePageVoiceControls()
     }
 
+
+    private fun updatePageVoiceControls() {
+        val button = pageVoiceButton ?: return
+        val noteId = currentPageNoteId ?: return
+        val prefs = getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE)
+        val targetId = prefs.getString("target_note_id", voiceTargetNoteId)
+        val recording = VoiceRecordingService.isRecording && targetId == noteId
+        val ready = pendingVoiceFilename != null && (voiceTargetNoteId == noteId || targetId == noteId)
+        button.setImageResource(if (recording) R.drawable.ic_stop_voice else R.drawable.ic_microphone)
+        button.background = if (recording) shape(Color.rgb(203, 62, 73), 12)
+            else shape(Color.rgb(240, 245, 251), 12, softBorder)
+        button.imageTintList = ColorStateList.valueOf(if (recording) Color.WHITE else indigo)
+        button.contentDescription = if (recording) "توقف ضبط و نام‌گذاری صدا" else "شروع ضبط صدا"
+        pageVoiceStatus?.apply {
+            visibility = if (recording || ready) View.VISIBLE else View.GONE
+            text = when {
+                recording -> "● در حال ضبط صدا  " + formatDuration(
+                    SystemClock.elapsedRealtime() - VoiceRecordingService.recordingStartedAt)
+                ready -> "صدا آماده است؛ ارسال را بزن تا نام‌گذاری شود."
+                else -> ""
+            }
+        }
+        pageSendButton?.background = shape(if (ready) emerald else ink, 12)
+    }
+
+    private fun handlePageMicrophone(note: Note) {
+        if (VoiceRecordingService.isRecording) {
+            val target = getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE)
+                .getString("target_note_id", voiceTargetNoteId)
+            if (target != note.id) {
+                Toast.makeText(this, "یک ضبط دیگر فعال است", Toast.LENGTH_LONG).show()
+                return
+            }
+            finishVoiceRecording()
+            awaitVoiceDraft(note.id, 0)
+            return
+        }
+        syncVoiceDraft()
+        if (pendingVoiceFilename != null) {
+            if (voiceTargetNoteId == note.id) showVoiceNoteNameDialog()
+            else Toast.makeText(this, "ابتدا صدای قبلی را ثبت کن", Toast.LENGTH_LONG).show()
+            return
+        }
+        voiceTargetNoteId = note.id
+        getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE).edit()
+            .putString("target_note_id", note.id).commit()
+        onMicrophoneClicked()
+        updatePageVoiceControls()
+        uiHandler.postDelayed({ updatePageVoiceControls() }, 650L)
+    }
+
+    private fun awaitVoiceDraft(noteId: String, tries: Int) {
+        uiHandler.postDelayed({
+            syncVoiceDraft()
+            updatePageVoiceControls()
+            if (pendingVoiceFilename != null && voiceTargetNoteId == noteId) {
+                showVoiceNoteNameDialog()
+            } else if (tries < 15) {
+                awaitVoiceDraft(noteId, tries + 1)
+            } else {
+                Toast.makeText(this, "فایل ضبط نشد؛ دوباره امتحان کن", Toast.LENGTH_LONG).show()
+            }
+        }, 180L)
+    }
+
     private fun navigateBackFromNote() {
         val open = currentPageNoteId?.let { id -> notes.firstOrNull { it.id == id } }
         val parent = open?.parentId?.let { id -> notes.firstOrNull { it.id == id } }
