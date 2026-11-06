@@ -165,6 +165,7 @@ class MainActivity : Activity() {
     private var pendingVoiceDurationMs = 0L
     private var voicePlayer: MediaPlayer? = null
     private var playingNoteId: String? = null
+    private var compactPlayerTicker: Runnable? = null
     private val voiceTicker = object : Runnable {
         override fun run() {
             if (VoiceRecordingService.isRecording) {
@@ -238,6 +239,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         uiHandler.removeCallbacks(voiceTicker)
+        compactPlayerTicker?.let { uiHandler.removeCallbacks(it) }
         stopPlayback()
         super.onDestroy()
     }
@@ -1252,16 +1254,70 @@ class MainActivity : Activity() {
             voiceCard.addView(label(attachment.title, 15f, ink, true).apply {
                 typeface = titleFont
             })
-            voiceCard.addView(actionLabel("پخش  " + formatDuration(attachment.durationMs)) {
-                toggleVoicePlayback(Note("attached-" + attachment.filename,
-                    attachment.title, false, Color.WHITE,
-                    audioFilename = attachment.filename,
-                    audioDurationMs = attachment.durationMs))
-            })
+            voiceCard.addView(compactAudioPlayer(attachment.filename, attachment.durationMs),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
             voiceCard.addView(voiceActionBar(attachment.filename),
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
         }
-        if (children.isEmpty() && note.audioAttachments.isEmpty()) {
+        // Gallery-style thumbnails live on this page, alongside voice and text.
+        if (note.imageFilenames.isNotEmpty()) {
+            list.addView(label("تصاویر", 16f, ink, true).apply {
+                typeface = titleFont
+                setPadding(dp(4), dp(10), dp(4), dp(8))
+            }, LinearLayout.LayoutParams(-1, -2))
+            val gallery = android.widget.GridLayout(this).apply {
+                columnCount = 3
+                alignmentMode = android.widget.GridLayout.ALIGN_BOUNDS
+                useDefaultMargins = false
+            }
+            list.addView(gallery, LinearLayout.LayoutParams(-1, -2))
+            val width = (resources.displayMetrics.widthPixels - dp(56)) / 3
+            note.imageFilenames.forEachIndexed { index, filename ->
+                val file = storedImageFile(filename)
+                if (file == null || !file.isFile) return@forEachIndexed
+                val tile = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    background = shape(Color.WHITE, 12, softBorder)
+                    setPadding(dp(5), dp(6), dp(5), dp(6))
+                }
+                gallery.addView(tile, android.widget.GridLayout.LayoutParams().apply {
+                    width = width
+                    height = dp(125)
+                    columnSpec = android.widget.GridLayout.spec(index % 3)
+                    rowSpec = android.widget.GridLayout.spec(index / 3)
+                    setMargins(dp(2), dp(2), dp(2), dp(2))
+                })
+                val preview = ImageView(this).apply {
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    background = shape(Color.rgb(242, 246, 250), 9)
+                    val options = android.graphics.BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
+                    }
+                    android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+                    val sample = (maxOf(options.outWidth, options.outHeight) / 260).coerceAtLeast(1)
+                    val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath,
+                        android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+                    setImageBitmap(bitmap)
+                    contentDescription = "بازکردن " + imageTitle(filename)
+                    setOnClickListener { openImageInPhone(filename) }
+                }
+                tile.addView(preview, LinearLayout.LayoutParams(-1, dp(78)))
+                tile.addView(label(imageTitle(filename), 11f, ink, true).apply {
+                    typeface = titleFont
+                    gravity = Gravity.CENTER
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setOnClickListener { openImageInPhone(filename) }
+                }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+                tile.addView(label("تغییر نام", 10f, indigo).apply {
+                    typeface = titleFont
+                    gravity = Gravity.CENTER
+                    setOnClickListener { renameImage(filename) }
+                })
+            }
+        }
+        if (children.isEmpty() && note.audioAttachments.isEmpty() && note.imageFilenames.isEmpty()) {
             val empty = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
@@ -1356,6 +1412,19 @@ class MainActivity : Activity() {
             setPadding(dp(8), dp(4), dp(8), dp(4))
         }
         page.addView(pageVoiceStatus, LinearLayout.LayoutParams(-1, -2))
+        page.addView(label("＋ افزودن عکس", 14f, indigo, true).apply {
+            typeface = titleFont
+            gravity = Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+            background = shape(Color.rgb(237, 243, 255), 11, softBorder)
+            setPadding(dp(8), dp(9), dp(8), dp(9))
+            setOnClickListener { pickImageForNote(note) }
+        }, LinearLayout.LayoutParams(-1, -2).apply {
+            marginStart = dp(16)
+            marginEnd = dp(16)
+            bottomMargin = dp(4)
+        })
         page.addView(label("افزودن عکس، تاریخ یا جزئیات", 12f, indigo, true).apply {
             typeface = titleFont
             gravity = Gravity.CENTER
