@@ -68,10 +68,9 @@ class MainActivity : Activity() {
         var category: String = "کتابخانه",
         var parentId: String? = null,
         val imageFilenames: MutableList<String> = mutableListOf(),
-        val audioAttachments: MutableList<AudioAttachment> = mutableListOf()
+        val audioAttachments: MutableList<AudioAttachment> = mutableListOf(),
+        var dueAt: Long? = null
     )
-
-    private enum class Filter { ALL, ACTIVE, COMPLETED }
 
     private val surface = Color.rgb(244, 247, 246)
     private val ink = Color.rgb(30, 41, 59)
@@ -88,12 +87,11 @@ class MainActivity : Activity() {
         Color.rgb(245, 247, 249)
     )
     private val notes = mutableListOf<Note>()
-    private val categories = listOf("کتابخانه", "کافی‌نت", "دانشگاه")
+    private val categories = mutableListOf("کتابخانه", "کافی‌نت", "دانشگاه")
     private var selectedCategory = "کتابخانه"
     private val categoryButtons = mutableMapOf<String, TextView>()
     private var pickingImageForNoteId: String? = null
     private var voiceTargetNoteId: String? = null
-    private var filter = Filter.ALL
     private var search = ""
     private var pendingPermissionNoteId: String? = null
     private val titleFont by lazy { loadTypeface("fonts/far_vazir.ttf") }
@@ -119,7 +117,7 @@ class MainActivity : Activity() {
     private lateinit var emptyState: LinearLayout
     private lateinit var scroll: ScrollView
     private lateinit var input: EditText
-    private val filterButtons = mutableMapOf<Filter, TextView>()
+    private lateinit var categoryBar: LinearLayout
     private lateinit var microphoneButton: ImageButton
     private lateinit var cancelAudioButton: ImageButton
     private lateinit var sendButton: ImageButton
@@ -161,8 +159,10 @@ class MainActivity : Activity() {
             View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         ReminderEngine.createChannel(this)
+        loadCategories()
         selectedCategory = getSharedPreferences("checklist_native", MODE_PRIVATE)
-            .getString("active_category", "کتابخانه")?.takeIf { it in categories } ?: "کتابخانه"
+            .getString("active_category", "کتابخانه")?.takeIf { it in categories }
+            ?: categories.first()
         loadNotes()
         loadAppearanceSettings()
         buildScreen()
@@ -262,18 +262,6 @@ class MainActivity : Activity() {
         dateLabel = label("", 13f, muted, true).apply { typeface = dateFont }
         heading.addView(dateLabel)
 
-        val settingsButton = ImageButton(this).apply {
-            setImageResource(R.drawable.ic_settings)
-            imageTintList = ColorStateList.valueOf(muted)
-            background = shape(Color.rgb(248, 250, 252), 10, softBorder)
-            setPadding(dp(8), dp(8), dp(8), dp(8))
-            contentDescription = "تنظیمات"
-            setOnClickListener { showAppearanceSettings() }
-        }
-        heading.addView(settingsButton, LinearLayout.LayoutParams(dp(34), dp(34)).apply {
-            marginStart = dp(7)
-        })
-
         val progressBlock = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
@@ -292,39 +280,42 @@ class MainActivity : Activity() {
             topMargin = dp(8)
         })
 
-        val categoryBar = LinearLayout(this).apply {
+        // The settings control stays in the far top corner, outside the title.
+        val settingsButton = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_settings)
+            imageTintList = ColorStateList.valueOf(muted)
+            background = shape(Color.rgb(248, 250, 252), 10, softBorder)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            contentDescription = "تنظیمات و مدیریت سربرگ‌ها"
+            setOnClickListener { showMainSettings() }
+        }
+        headerTop.addView(settingsButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+            marginStart = dp(10)
+        })
+
+        categoryBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_RTL
-            gravity = Gravity.CENTER
-            background = shape(Color.rgb(244, 246, 251), 13)
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), dp(4), dp(4), dp(4))
+            background = shape(Color.rgb(244, 246, 251), 13)
         }
-        header.addView(categoryBar, LinearLayout.LayoutParams(-1, dp(47)).apply {
+        val categoryScroll = android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            isFillViewport = true
+            addView(categoryBar, android.widget.HorizontalScrollView.LayoutParams(
+                -2, dp(47)))
+        }
+        header.addView(categoryScroll, LinearLayout.LayoutParams(-1, dp(47)).apply {
             topMargin = dp(11)
         })
-        categories.forEach { category ->
-            val tab = label(category, 15f, ink, true).apply {
-                gravity = Gravity.CENTER
-                isClickable = true
-                isFocusable = true
-                setOnClickListener {
-                    selectedCategory = category
-                    getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
-                        .putString("active_category", category).apply()
-                    updateCategories()
-                    renderNotes()
-                }
-            }
-            categoryBar.addView(tab, LinearLayout.LayoutParams(0, -1, 1f))
-            categoryButtons[category] = tab
-        }
-        updateCategories()
+        renderCategoryTabs()
 
-        val searchAndFilters = LinearLayout(this).apply {
+        val searchRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        header.addView(searchAndFilters, LinearLayout.LayoutParams(-1, dp(44)).apply {
+        header.addView(searchRow, LinearLayout.LayoutParams(-1, dp(44)).apply {
             topMargin = dp(12)
         })
 
@@ -340,9 +331,7 @@ class MainActivity : Activity() {
             setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0)
         }
         searchField.typeface = textFont
-        searchAndFilters.addView(searchField, LinearLayout.LayoutParams(0, dp(41), 1f).apply {
-            marginEnd = dp(10)
-        })
+        searchRow.addView(searchField, LinearLayout.LayoutParams(-1, dp(41)))
         searchField.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -351,35 +340,6 @@ class MainActivity : Activity() {
             }
             override fun afterTextChanged(s: Editable?) {}
         })
-
-        val filters = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(3), dp(3), dp(3), dp(3))
-            background = shape(Color.rgb(241, 245, 249), 12)
-        }
-        searchAndFilters.addView(filters, LinearLayout.LayoutParams(-2, dp(41)))
-
-        listOf(
-            Filter.ALL to "همه",
-            Filter.ACTIVE to "جاری",
-            Filter.COMPLETED to "انجام"
-        ).forEach { (type, caption) ->
-            val tab = label(caption, 11f, muted, true).apply {
-                gravity = Gravity.CENTER
-                isClickable = true
-                isFocusable = true
-                contentDescription = "نمایش " + caption
-                setOnClickListener {
-                    filter = type
-                    updateFilters()
-                    renderNotes()
-                }
-            }
-            filters.addView(tab, LinearLayout.LayoutParams(dp(46), -1))
-            filterButtons[type] = tab
-        }
-        updateFilters()
 
         val main = FrameLayout(this)
         root.addView(main, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -533,6 +493,33 @@ class MainActivity : Activity() {
         refreshVoiceComposer()
     }
 
+    private fun renderCategoryTabs() {
+        if (!::categoryBar.isInitialized) return
+        categoryBar.removeAllViews()
+        categoryButtons.clear()
+        categories.forEach { category ->
+            val tab = label(category, 15f, ink, true).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(17), 0, dp(17), 0)
+                minWidth = dp(95)
+                maxLines = 1
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    selectedCategory = category
+                    persistSelectedCategory()
+                    updateCategories()
+                    renderNotes()
+                }
+            }
+            categoryBar.addView(tab, LinearLayout.LayoutParams(-2, -1).apply {
+                marginEnd = dp(4)
+            })
+            categoryButtons[category] = tab
+        }
+        updateCategories()
+    }
+
     private fun updateCategories() {
         categoryButtons.forEach { (category, tab) ->
             val active = category == selectedCategory
@@ -540,6 +527,34 @@ class MainActivity : Activity() {
             tab.setTextColor(if (active) indigo else muted)
             tab.elevation = if (active) dp(2).toFloat() else 0f
         }
+    }
+
+    private fun persistSelectedCategory() {
+        getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
+            .putString("active_category", selectedCategory).apply()
+    }
+
+    private fun loadCategories() {
+        val saved = getSharedPreferences("checklist_native", MODE_PRIVATE)
+            .getString("categories_v2", null) ?: return
+        runCatching {
+            val json = JSONArray(saved)
+            val loaded = mutableListOf<String>()
+            for (i in 0 until json.length()) {
+                val value = json.optString(i).trim()
+                if (value.isNotEmpty() && value !in loaded) loaded.add(value)
+            }
+            if (loaded.isNotEmpty()) {
+                categories.clear()
+                categories.addAll(loaded)
+            }
+        }
+    }
+
+    private fun saveCategories() {
+        getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
+            .putString("categories_v2", JSONArray(categories).toString())
+            .putString("active_category", selectedCategory).apply()
     }
 
     private fun requestInitialPermissions() {
@@ -553,14 +568,6 @@ class MainActivity : Activity() {
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             missing.add(Manifest.permission.POST_NOTIFICATIONS)
         if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), 915)
-    }
-
-    private fun updateFilters() {
-        filterButtons.forEach { (key, tab) ->
-            val selected = key == filter
-            tab.setTextColor(if (selected) Color.WHITE else muted)
-            tab.background = if (selected) shape(ink, 9) else null
-        }
     }
 
     private fun updateDate() {
@@ -588,12 +595,7 @@ class MainActivity : Activity() {
         val visible = notes.filter { note ->
             val searchMatch = note.text.contains(search, ignoreCase = true) ||
                 notes.any { it.parentId == note.id && it.text.contains(search, ignoreCase = true) }
-            val filterMatch = when (filter) {
-                Filter.ALL -> true
-                Filter.ACTIVE -> !note.completed
-                Filter.COMPLETED -> note.completed
-            }
-            note.category == selectedCategory && note.parentId == null && searchMatch && filterMatch
+            note.category == selectedCategory && note.parentId == null && searchMatch
         }
         emptyState.visibility = if (visible.isEmpty()) View.VISIBLE else View.GONE
         visible.forEachIndexed { index, note -> addNoteCard(note, index + 1) }
@@ -1051,10 +1053,6 @@ class MainActivity : Activity() {
         notes.add(Note(UUID.randomUUID().toString(), text, false, palette[Random.nextInt(palette.size)], category = selectedCategory))
         saveNotes()
         input.text.clear()
-        if (filter != Filter.ALL) {
-            filter = Filter.ALL
-            updateFilters()
-        }
         renderNotes()
         scroll.post { scroll.smoothScrollTo(0, noteList.bottom) }
     }
@@ -1713,8 +1711,7 @@ class MainActivity : Activity() {
                     obj.optLong("calendarEventId", 0L).takeIf { it > 0L },
                     obj.optString("audioFilename", "").takeIf { it.isNotEmpty() },
                     obj.optLong("audioDurationMs", 0L).coerceAtLeast(0L),
-                    category = obj.optString("category", "کتابخانه").takeIf { it in categories }
-                        ?: "کتابخانه",
+                    category = obj.optString("category", "کتابخانه").ifBlank { "کتابخانه" },
                     parentId = obj.optString("parentId", "").takeIf { it.isNotEmpty() },
                     imageFilenames = mutableListOf<String>().apply {
                         val images = obj.optJSONArray("images") ?: JSONArray()
@@ -1733,10 +1730,20 @@ class MainActivity : Activity() {
                                     item.optLong("durationMs", 0L))
                             )
                         }
-                    }
+                    },
+                    dueAt = obj.optLong("dueAt", 0L).takeIf { it > 0L }
                 ))
             }
         }
+        // Preserve any custom category already stored in note data.
+        var categoriesChanged = false
+        notes.forEach { note ->
+            if (note.category !in categories) {
+                categories.add(note.category)
+                categoriesChanged = true
+            }
+        }
+        if (categoriesChanged) saveCategories()
     }
 
     private fun saveNotes() {
@@ -1753,6 +1760,7 @@ class MainActivity : Activity() {
                 put("audioDurationMs", it.audioDurationMs)
                 put("category", it.category)
                 put("parentId", it.parentId ?: "")
+                put("dueAt", it.dueAt ?: 0L)
                 put("images", JSONArray().apply { it.imageFilenames.forEach { name -> put(name) } })
                 put("audioAttachments", JSONArray().apply {
                     it.audioAttachments.forEach { item -> put(JSONObject().apply {
