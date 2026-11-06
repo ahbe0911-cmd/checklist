@@ -123,7 +123,7 @@ object AlarmUi {
         solarCard.addView(solarControls)
         solarControls.addView(button(a,"تنظیمات"){edit(a,solar,true,dialog)},
             LinearLayout.LayoutParams(0,-2,1f))
-        solarControls.addView(button(a,"موقعیت"){locationEditor(a){show(a)}},
+        solarControls.addView(button(a,"موقعیت"){dialog.dismiss();locationEditor(a){show(a)}},
             LinearLayout.LayoutParams(0,-2,1f).apply{marginStart=dp(a,6)})
         solarControls.addView(button(a,if(solar.enabled)"فعال ✓" else "خاموش"){ 
             solar.enabled=!solar.enabled
