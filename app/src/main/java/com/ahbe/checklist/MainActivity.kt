@@ -1324,8 +1324,6 @@ class MainActivity : Activity() {
                         audioFilename = attachment.filename,
                         audioDurationMs = attachment.durationMs))
                 }, LinearLayout.LayoutParams(0, -2, 1f))
-                controls.addView(voiceActionBar(attachment.filename),
-                    LinearLayout.LayoutParams(0, -2, 2f).apply { marginStart = dp(6) })
                 controls.addView(actionLabel("حذف") {
                     AlertDialog.Builder(this).setTitle("حذف صوت")
                         .setMessage("فایل صوتی از این یادداشت حذف شود؟")
@@ -1339,6 +1337,8 @@ class MainActivity : Activity() {
                             showNoteDetail(note)
                         }.show()
                 }, LinearLayout.LayoutParams(0, -2, 1f))
+                content.addView(voiceActionBar(attachment.filename),
+                    LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
             }
         }
 
