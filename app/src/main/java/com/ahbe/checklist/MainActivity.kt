@@ -1054,8 +1054,17 @@ class MainActivity : Activity() {
         tapArea.addView(noteTextColumn, LinearLayout.LayoutParams(0, -2, 1f))
         val noteText = label(note.text, noteTextSize.toFloat(), if (note.completed) muted else ink, !note.completed).apply {
             typeface = textFont
-            maxLines = 2
-            ellipsize = TextUtils.TruncateAt.END
+            // Word-style paragraph justification for multi-line Persian text.
+            // Preserve the complete original text instead of squeezing it into two lines.
+            maxLines = Int.MAX_VALUE
+            ellipsize = null
+            gravity = Gravity.TOP or Gravity.RIGHT
+            textDirection = View.TEXT_DIRECTION_FIRST_STRONG
+            breakStrategy = android.text.Layout.BREAK_STRATEGY_HIGH_QUALITY
+            justificationMode = android.text.Layout.JUSTIFICATION_MODE_INTER_WORD
+            setLineSpacing(dp(4).toFloat(), 1.12f)
+            includeFontPadding = true
+            setPadding(dp(3), dp(5), dp(3), dp(5))
             if (note.completed) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
         }
         noteTextColumn.addView(noteText, LinearLayout.LayoutParams(-1, -2))
@@ -1944,6 +1953,7 @@ class MainActivity : Activity() {
         }
         val controls = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
             gravity = Gravity.CENTER_VERTICAL
         }
         row.addView(controls, LinearLayout.LayoutParams(-1, -2))
@@ -2000,6 +2010,9 @@ class MainActivity : Activity() {
         }
         controls.addView(speed, LinearLayout.LayoutParams(dp(48), dp(39)))
         val slider = SeekBar(this).apply {
+            // Playback progress must increase visually from LEFT to RIGHT in an RTL app.
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            textDirection = View.TEXT_DIRECTION_LTR
             max = 1000
             progress = 0
             progressTintList = ColorStateList.valueOf(indigo)
@@ -2021,7 +2034,9 @@ class MainActivity : Activity() {
         row.addView(slider, LinearLayout.LayoutParams(-1, dp(30)))
         val time = label("۰:۰۰ / " + formatDuration(durationMs), 11f, muted).apply {
             typeface = titleFont
-            gravity = Gravity.END
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            textDirection = View.TEXT_DIRECTION_LTR
+            gravity = Gravity.LEFT
         }
         row.addView(time, LinearLayout.LayoutParams(-1, -2))
         fun repaintState() {
