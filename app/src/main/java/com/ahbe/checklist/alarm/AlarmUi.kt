@@ -173,6 +173,19 @@ object AlarmUi {
                     Uri.parse("package:"+a.packageName)))}
             })
         }
+        if(Build.VERSION.SDK_INT>=34) {
+            val nm=a.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            if(!nm.canUseFullScreenIntent()){
+                content.addView(txt(a,"برای نمایش زنگ روی صفحه قفل، مجوز نمایش تمام‌صفحه را بررسی کنید.",
+                    12f,Color.rgb(186,83,55)))
+                content.addView(button(a,"تنظیم نمایش تمام‌صفحه") {
+                    runCatching {
+                        a.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                            Uri.parse("package:"+a.packageName)))
+                    }
+                })
+            }
+        }
         dialog.setContentView(shell)
         dialog.window?.apply {
             setBackgroundDrawableResource(android.R.color.transparent)
@@ -363,7 +376,24 @@ object AlarmUi {
     fun receivePickedAudio(a:Activity,data:Intent?) {
         val uri=data?.data?:return
         val dir=File(a.filesDir,"alarm_sounds").apply{mkdirs()}
-        val file=File(dir,UUID.randomUUID().toString()+".audio")
+        var originalName="صدای انتخابی"
+        runCatching {
+            a.contentResolver.query(uri,arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                null,null,null)?.use {cursor->
+                if(cursor.moveToFirst()) originalName=cursor.getString(0) ?: originalName
+            }
+        }
+        val clean=originalName.replace(Regex("[/\\\\\\x00-\\x1F]"),"_").take(90)
+            .ifBlank{"صدای انتخابی"}
+        val base=clean.substringBeforeLast(".",clean).ifBlank{"صدای انتخابی"}
+        val ext=clean.substringAfterLast(".", "audio").take(8)
+        var candidateName=clean
+        var index=2
+        while(File(dir,candidateName).exists()){
+            candidateName=base+" ("+index+")"+"."+ext
+            index++
+        }
+        val file=File(dir,candidateName)
         val copied=runCatching{
             a.contentResolver.openInputStream(uri)?.use{source->
                 file.outputStream().use{dest->
