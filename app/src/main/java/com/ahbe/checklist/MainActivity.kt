@@ -128,6 +128,9 @@ class MainActivity : Activity() {
     private lateinit var homePage: LinearLayout
     private var notePage: LinearLayout? = null
     private var currentPageNoteId: String? = null
+    private var pageVoiceButton: ImageButton? = null
+    private var pageVoiceStatus: TextView? = null
+    private var pageSendButton: ImageButton? = null
 
     private lateinit var headingLabel: TextView
     private lateinit var searchField: EditText
@@ -167,10 +170,12 @@ class MainActivity : Activity() {
             if (VoiceRecordingService.isRecording) {
                 voiceTimer.text = formatDuration(
                     SystemClock.elapsedRealtime() - VoiceRecordingService.recordingStartedAt)
+                updatePageVoiceControls()
                 uiHandler.postDelayed(this, 400L)
             } else {
                 syncVoiceDraft()
                 refreshVoiceComposer()
+                updatePageVoiceControls()
             }
         }
     }
@@ -217,6 +222,7 @@ class MainActivity : Activity() {
             ReminderEngine.restore(this)
             syncVoiceDraft()
             refreshVoiceComposer()
+            updatePageVoiceControls()
             if (VoiceRecordingService.isRecording) {
                 uiHandler.removeCallbacks(voiceTicker)
                 uiHandler.post(voiceTicker)
@@ -283,7 +289,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        header.addView(headerTop, LinearLayout.LayoutParams(-1, dp(49)))
+        header.addView(headerTop, LinearLayout.LayoutParams(-1, dp(64)))
 
         val heading = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -296,8 +302,16 @@ class MainActivity : Activity() {
         }
         heading.addView(headingLabel)
 
-        dateLabel = label("", 13f, muted, true).apply { typeface = dateFont }
-        heading.addView(dateLabel)
+        dateLabel = label("", 15f, Color.rgb(58, 77, 114), true).apply {
+            typeface = titleFont
+            gravity = Gravity.CENTER
+            background = shape(Color.rgb(236, 242, 255), 11, Color.rgb(215, 227, 250))
+            setPadding(dp(11), dp(4), dp(11), dp(4))
+            maxLines = 1
+        }
+        heading.addView(dateLabel, LinearLayout.LayoutParams(-2, -2).apply {
+            topMargin = dp(4)
+        })
 
         val progressBlock = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
