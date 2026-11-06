@@ -557,6 +557,179 @@ class MainActivity : Activity() {
             .putString("active_category", selectedCategory).apply()
     }
 
+    private fun showMainSettings() {
+        AlertDialog.Builder(this)
+            .setTitle("تنظیمات")
+            .setItems(arrayOf("مدیریت سربرگ‌ها", "تنظیمات ظاهری و فونت")) { _, choice ->
+                if (choice == 0) showCategoryManager() else showAppearanceSettings()
+            }
+            .setNegativeButton("بستن", null)
+            .show()
+    }
+
+    private fun normalizedCategoryName(raw: String, previous: String? = null): String? {
+        val title = raw.trim()
+        when {
+            title.isEmpty() -> Toast.makeText(this, "نام سربرگ نمی‌تواند خالی باشد", Toast.LENGTH_SHORT).show()
+            title.length > 32 -> Toast.makeText(this, "نام سربرگ باید کوتاه‌تر از ۳۳ حرف باشد", Toast.LENGTH_SHORT).show()
+            categories.any { it == title && it != previous } ->
+                Toast.makeText(this, "این نام قبلاً وجود دارد", Toast.LENGTH_SHORT).show()
+            else -> return title
+        }
+        return null
+    }
+
+    private fun refreshCategoriesAfterEdit() {
+        renderCategoryTabs()
+        renderNotes()
+    }
+
+    private fun renameCategory(oldName: String) {
+        val field = EditText(this).apply {
+            setText(oldName)
+            selectAll()
+            setSingleLine(true)
+            typeface = textFont
+            setPadding(dp(20), dp(13), dp(20), dp(13))
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("ویرایش نام سربرگ")
+            .setView(field)
+            .setNegativeButton("انصراف", null)
+            .setPositiveButton("ذخیره", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val title = normalizedCategoryName(field.text.toString(), oldName)
+                    ?: return@setOnClickListener
+                if (oldName != title) {
+                    val position = categories.indexOf(oldName)
+                    if (position >= 0) categories[position] = title
+                    notes.filter { it.category == oldName }.forEach { it.category = title }
+                    if (selectedCategory == oldName) selectedCategory = title
+                    saveNotes()
+                    saveCategories()
+                    refreshCategoriesAfterEdit()
+                }
+                dialog.dismiss()
+                showCategoryManager()
+            }
+        }
+        dialog.show()
+    }
+
+    private fun deleteCategory(name: String) {
+        if (categories.size <= 1) {
+            Toast.makeText(this, "حداقل یک سربرگ باید باقی بماند", Toast.LENGTH_LONG).show()
+            return
+        }
+        val count = notes.count { it.category == name }
+        if (count == 0) {
+            AlertDialog.Builder(this)
+                .setTitle("حذف سربرگ «" + name + "»")
+                .setMessage("این سربرگ خالی است. حذف شود؟")
+                .setNegativeButton("انصراف", null)
+                .setPositiveButton("حذف") { _, _ ->
+                    categories.remove(name)
+                    if (selectedCategory == name) selectedCategory = categories.first()
+                    saveCategories()
+                    refreshCategoriesAfterEdit()
+                    showCategoryManager()
+                }.show()
+            return
+        }
+        val destinations = categories.filter { it != name }
+        AlertDialog.Builder(this)
+            .setTitle("انتقال یادداشت‌ها پیش از حذف")
+            .setMessage("در این سربرگ " + fa(count) +
+                " یادداشت و زیرمجموعه وجود دارد. برای جلوگیری از حذف اطلاعات، مقصد آن‌ها را انتخاب کن.")
+            .setNegativeButton("انصراف", null)
+            .setItems(destinations.toTypedArray()) { _, which ->
+                val destination = destinations[which]
+                AlertDialog.Builder(this)
+                    .setTitle("حذف سربرگ")
+                    .setMessage("همه یادداشت‌های «" + name + "» به «" +
+                        destination + "» منتقل شوند و فقط سربرگ قبلی حذف شود؟")
+                    .setNegativeButton("انصراف", null)
+                    .setPositiveButton("انتقال و حذف") { _, _ ->
+                        notes.filter { it.category == name }.forEach { it.category = destination }
+                        categories.remove(name)
+                        if (selectedCategory == name) selectedCategory = destination
+                        saveNotes()
+                        saveCategories()
+                        refreshCategoriesAfterEdit()
+                        showCategoryManager()
+                    }.show()
+            }.show()
+    }
+
+    private fun showCategoryManager() {
+        val items = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(14), dp(12), dp(14), dp(14))
+        }
+        val dialog = AlertDialog.Builder(this).setTitle("مدیریت سربرگ‌ها")
+            .setView(ScrollView(this).apply { addView(items) })
+            .setPositiveButton("بستن", null).create()
+        categories.toList().forEach { category ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(4), dp(5), dp(4), dp(5))
+            }
+            items.addView(row, LinearLayout.LayoutParams(-1, -2))
+            row.addView(label(category, 15f, ink, true),
+                LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(label("ویرایش", 12f, indigo, true).apply {
+                setPadding(dp(9), dp(12), dp(9), dp(12))
+                setOnClickListener {
+                    dialog.dismiss()
+                    renameCategory(category)
+                }
+            })
+            row.addView(label("حذف", 12f, Color.rgb(180, 60, 65), true).apply {
+                setPadding(dp(9), dp(12), dp(9), dp(12))
+                setOnClickListener {
+                    dialog.dismiss()
+                    deleteCategory(category)
+                }
+            })
+            items.addView(View(this).apply { setBackgroundColor(softBorder) },
+                LinearLayout.LayoutParams(-1, dp(1)))
+        }
+        val addRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        items.addView(addRow, LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = dp(15)
+        })
+        val nameInput = EditText(this).apply {
+            hint = "نام سربرگ جدید"
+            textSize = 15f
+            typeface = textFont
+            setSingleLine(true)
+            background = shape(Color.rgb(248, 250, 252), 10, softBorder)
+            setPadding(dp(12), 0, dp(12), 0)
+        }
+        addRow.addView(nameInput, LinearLayout.LayoutParams(0, dp(48), 1f))
+        addRow.addView(label("افزودن", 13f, indigo, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(12), 0, dp(12), 0)
+            setOnClickListener {
+                val name = normalizedCategoryName(nameInput.text.toString())
+                    ?: return@setOnClickListener
+                categories.add(name)
+                selectedCategory = name
+                saveCategories()
+                refreshCategoriesAfterEdit()
+                dialog.dismiss()
+                showCategoryManager()
+            }
+        }, LinearLayout.LayoutParams(-2, dp(48)))
+        dialog.show()
+    }
+
     private fun requestInitialPermissions() {
         val prefs = getSharedPreferences("checklist_native", MODE_PRIVATE)
         if (prefs.getBoolean("initial_permissions_requested", false)) return
