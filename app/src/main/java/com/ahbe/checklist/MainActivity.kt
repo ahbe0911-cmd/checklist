@@ -1271,7 +1271,7 @@ class MainActivity : Activity() {
                 useDefaultMargins = false
             }
             list.addView(gallery, LinearLayout.LayoutParams(-1, -2))
-            val width = (resources.displayMetrics.widthPixels - dp(56)) / 3
+            val tileWidthPx = (resources.displayMetrics.widthPixels - dp(56)) / 3
             note.imageFilenames.forEachIndexed { index, filename ->
                 val file = storedImageFile(filename)
                 if (file == null || !file.isFile) return@forEachIndexed
@@ -1282,7 +1282,7 @@ class MainActivity : Activity() {
                     setPadding(dp(5), dp(6), dp(5), dp(6))
                 }
                 gallery.addView(tile, android.widget.GridLayout.LayoutParams().apply {
-                    width = width
+                    width = tileWidthPx
                     height = dp(125)
                     columnSpec = android.widget.GridLayout.spec(index % 3)
                     rowSpec = android.widget.GridLayout.spec(index / 3)
