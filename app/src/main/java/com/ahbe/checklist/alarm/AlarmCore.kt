@@ -147,6 +147,7 @@ object AlarmScheduler {
     fun schedule(c:Context,item:AlarmItem) {
         val mgr=c.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         mgr.cancel(pending(c,item.id))
+        if (!item.enabled) cancel(c,item.id)
         item.next=if(item.enabled)next(item,c)?:0 else 0
         // Persist the computed next-run independently of all note preferences.
         val list=AlarmStore.read(c);val index=list.indexOfFirst {it.id==item.id}
@@ -190,8 +191,10 @@ class AlarmTriggerReceiver:BroadcastReceiver() {
         if(intent.action!=AlarmScheduler.FIRE)return
         val id=intent.getStringExtra("alarm_id")?:return
         val item=AlarmStore.get(c,id)?:return
-        if(!item.enabled)return
-        if(!intent.getBooleanExtra("is_snooze",false)) {
+        val isSnooze=intent.getBooleanExtra("is_snooze",false)
+        // A one-shot alarm becomes inactive after firing; its snooze must still ring.
+        if(!item.enabled && !isSnooze)return
+        if(!isSnooze) {
             if(!item.sunrise && item.repeat==0) {
                 item.enabled=false;item.next=0
                 val list=AlarmStore.read(c)
