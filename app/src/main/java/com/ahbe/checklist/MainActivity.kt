@@ -1250,22 +1250,98 @@ class MainActivity : Activity() {
             })
         }
 
-        // Keep the page visually quiet: media and date tools remain in the Add dialog.
-        val add = label("افزودن", 17f, Color.WHITE, true).apply {
+
+        // Record and send directly into the currently open note.
+        val composer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(7), dp(8), dp(7))
+            background = shape(Color.WHITE, 16, softBorder)
+        }
+        page.addView(composer, LinearLayout.LayoutParams(-1, -2).apply {
+            marginStart = dp(16)
+            marginEnd = dp(16)
+            topMargin = dp(7)
+            bottomMargin = dp(8)
+        })
+        val entryField = EditText(this).apply {
+            hint = "یک مورد جدید بنویس..."
+            setSingleLine(true)
+            textSize = 14f
+            typeface = textFont
+            setTextColor(ink)
+            setHintTextColor(muted)
+            background = null
+            setPadding(dp(8), 0, dp(8), 0)
+            imeOptions = EditorInfo.IME_ACTION_DONE
+        }
+        composer.addView(entryField, LinearLayout.LayoutParams(0, dp(45), 1f))
+        val mic = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_microphone)
+            background = shape(Color.rgb(240, 245, 251), 12, softBorder)
+            imageTintList = ColorStateList.valueOf(indigo)
+            setPadding(dp(11), dp(11), dp(11), dp(11))
+            contentDescription = "ضبط صدا در این یادداشت"
+            setOnClickListener { handlePageMicrophone(note) }
+        }
+        pageVoiceButton = mic
+        composer.addView(mic, LinearLayout.LayoutParams(dp(45), dp(45)).apply {
+            marginStart = dp(6)
+        })
+        val send = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_send_message)
+            imageTintList = ColorStateList.valueOf(Color.WHITE)
+            background = shape(ink, 12)
+            setPadding(dp(11), dp(11), dp(11), dp(11))
+            contentDescription = "ارسال متن یا صدای یادداشت"
+        }
+        pageSendButton = send
+        composer.addView(send, LinearLayout.LayoutParams(dp(45), dp(45)).apply {
+            marginStart = dp(6)
+        })
+        val submitPageEntry = {
+            syncVoiceDraft()
+            when {
+                VoiceRecordingService.isRecording -> handlePageMicrophone(note)
+                pendingVoiceFilename != null -> showVoiceNoteNameDialog()
+                else -> {
+                    val value = entryField.text.toString().trim()
+                    if (value.isEmpty()) {
+                        entryField.error = "متن را بنویس یا میکروفون را بزن"
+                    } else {
+                        notes.add(Note(UUID.randomUUID().toString(), value, false,
+                            palette[Random.nextInt(palette.size)],
+                            category = note.category, parentId = note.id))
+                        saveNotes()
+                        renderNotes()
+                    }
+                }
+            }
+        }
+        send.setOnClickListener { submitPageEntry() }
+        entryField.setOnEditorActionListener { _, action, _ ->
+            if (action == EditorInfo.IME_ACTION_DONE) {
+                submitPageEntry()
+                true
+            } else false
+        }
+        pageVoiceStatus = label("", 12f, Color.rgb(176, 58, 66), true).apply {
+            typeface = titleFont
             gravity = Gravity.CENTER
-            background = shape(ink, 16)
-            elevation = dp(3).toFloat()
+            visibility = View.GONE
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+        }
+        page.addView(pageVoiceStatus, LinearLayout.LayoutParams(-1, -2))
+        page.addView(label("افزودن عکس، تاریخ یا جزئیات", 12f, indigo, true).apply {
+            typeface = titleFont
+            gravity = Gravity.CENTER
             isClickable = true
             isFocusable = true
-            contentDescription = "افزودن مورد به " + note.text
+            setPadding(dp(5), dp(8), dp(5), dp(11))
             setOnClickListener { showNoteDetail(note) }
-        }
-        page.addView(add, LinearLayout.LayoutParams(-1, dp(54)).apply {
-            marginStart = dp(20)
-            marginEnd = dp(20)
-            topMargin = dp(9)
-            bottomMargin = dp(16)
-        })
+        }, LinearLayout.LayoutParams(-1, -2))
+        updatePageVoiceControls()
     }
 
     private fun navigateBackFromNote() {
