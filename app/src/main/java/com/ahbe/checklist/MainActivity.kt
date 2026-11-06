@@ -1050,41 +1050,72 @@ class MainActivity : Activity() {
             .setView(scroller)
             .setPositiveButton("بستن", null)
             .create()
-        content.addView(label("دسته: " + note.category, 12f, muted),
-            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
 
-        val firstRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        content.addView(firstRow, LinearLayout.LayoutParams(-1, -2))
-        firstRow.addView(actionLabel("افزودن زیرشاخه") {
-            detail.dismiss()
-            showAddChildDialog(note)
-        }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(6) })
-        firstRow.addView(actionLabel("افزودن عکس") {
-            pickingImageForNoteId = note.id
-            getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
-                .putString("image_target", note.id).apply()
-            detail.dismiss()
-            val choose = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE)
-                type = "image/*"
+        if (note.parentId != null) {
+            content.addView(label("‹ بازگشت به یادداشت قبلی", 13f, indigo).apply {
+                setPadding(0, 0, 0, dp(11))
+                setOnClickListener {
+                    detail.dismiss()
+                    notes.firstOrNull { it.id == note.parentId }?.let { showNoteDetail(it) }
+                }
+            }, LinearLayout.LayoutParams(-1, -2))
+        }
+        content.addView(label(
+            note.dueAt?.let { "تاریخ اجرا: " + formatDueDate(it) }
+                ?: "انتخاب تاریخ اجرای شمسی",
+            13f, if (note.dueAt == null) muted else Color.rgb(195, 45, 52), true
+        ).apply {
+            setPadding(0, dp(5), 0, dp(10))
+            setOnClickListener {
+                showPersianDatePicker(note.dueAt) { picked ->
+                    note.dueAt = picked
+                    saveNotes()
+                    renderNotes()
+                    detail.dismiss()
+                    showNoteDetail(note)
+                }
             }
-            startActivityForResult(choose, 2014)
-        }, LinearLayout.LayoutParams(0, -2, 1f))
+        }, LinearLayout.LayoutParams(-1, -2))
 
-        val secondRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        content.addView(secondRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
-        secondRow.addView(actionLabel("ضبط صوت در این یادداشت") {
-            voiceTargetNoteId = note.id
-            getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE).edit()
-                .putString("target_note_id", note.id).apply()
-            detail.dismiss()
-            onMicrophoneClicked()
-        }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(6) })
-        secondRow.addView(actionLabel(if (note.completed) "بازگرداندن به جاری" else "علامت انجام") {
-            toggleCompleted(note)
-            detail.dismiss()
-            showNoteDetail(note)
-        }, LinearLayout.LayoutParams(0, -2, 1f))
+        val mediaRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        content.addView(mediaRow, LinearLayout.LayoutParams(-1, -2))
+        mediaRow.addView(label("عکس +", 12f, indigo, true).apply {
+            setPadding(dp(5), dp(8), dp(15), dp(8))
+            setOnClickListener {
+                pickingImageForNoteId = note.id
+                getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
+                    .putString("image_target", note.id).apply()
+                detail.dismiss()
+                val choose = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "image/*"
+                }
+                startActivityForResult(choose, 2014)
+            }
+        })
+        mediaRow.addView(label("صوت +", 12f, indigo, true).apply {
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setOnClickListener {
+                voiceTargetNoteId = note.id
+                getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE).edit()
+                    .putString("target_note_id", note.id).apply()
+                detail.dismiss()
+                onMicrophoneClicked()
+            }
+        })
+        mediaRow.addView(View(this), LinearLayout.LayoutParams(0, dp(1), 1f))
+        mediaRow.addView(label(if (note.completed) "✓ انجام‌شده" else "○ انجام",
+            12f, if (note.completed) emerald else muted).apply {
+            setPadding(dp(10), dp(8), dp(5), dp(8))
+            setOnClickListener {
+                toggleCompleted(note)
+                detail.dismiss()
+                showNoteDetail(note)
+            }
+        })
 
         if (note.audioFilename != null) {
             content.addView(label("صدای اصلی یادداشت", 15f, ink, true),
