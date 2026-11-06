@@ -1442,6 +1442,9 @@ class MainActivity : Activity() {
         currentPageNoteId = null
         notePage?.let { screenRoot.removeView(it) }
         notePage = null
+        pageVoiceButton = null
+        pageVoiceStatus = null
+        pageSendButton = null
         if (::homePage.isInitialized) homePage.visibility = View.VISIBLE
     }
 
