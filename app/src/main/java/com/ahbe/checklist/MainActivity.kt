@@ -141,9 +141,14 @@ class MainActivity : Activity() {
     private var playingNoteId: String? = null
     private val voiceTicker = object : Runnable {
         override fun run() {
-            if (recorder == null) return
-            voiceTimer.text = formatDuration(SystemClock.elapsedRealtime() - recordingStartedAt)
-            uiHandler.postDelayed(this, 400L)
+            if (VoiceRecordingService.isRecording) {
+                voiceTimer.text = formatDuration(
+                    SystemClock.elapsedRealtime() - VoiceRecordingService.recordingStartedAt)
+                uiHandler.postDelayed(this, 400L)
+            } else {
+                syncVoiceDraft()
+                refreshVoiceComposer()
+            }
         }
     }
 
@@ -171,24 +176,23 @@ class MainActivity : Activity() {
         if (::dateLabel.isInitialized) {
             updateDate()
             ReminderEngine.restore(this)
+            syncVoiceDraft()
+            refreshVoiceComposer()
+            if (VoiceRecordingService.isRecording) {
+                uiHandler.removeCallbacks(voiceTicker)
+                uiHandler.post(voiceTicker)
+            }
         }
     }
 
     override fun onStop() {
-        if (recorder != null) finishVoiceRecording()
+        // Mic capture belongs to the foreground service; never stop on screen lock.
         stopPlayback()
         super.onStop()
     }
 
     override fun onDestroy() {
         uiHandler.removeCallbacks(voiceTicker)
-        if (recorder != null) {
-            runCatching { recorder?.stop() }
-            runCatching { recorder?.release() }
-            recorder = null
-            recordingFilename?.let { storedAudioFile(it)?.delete() }
-        }
-        pendingVoiceFilename?.let { storedAudioFile(it)?.delete() }
         stopPlayback()
         super.onDestroy()
     }
@@ -1285,7 +1289,7 @@ class MainActivity : Activity() {
 
     private fun refreshVoiceComposer() {
         if (!::voiceStatus.isInitialized) return
-        val isRecording = recorder != null
+        val isRecording = VoiceRecordingService.isRecording
         val hasDraft = pendingVoiceFilename != null
         val active = isRecording || hasDraft
 
@@ -1337,15 +1341,30 @@ class MainActivity : Activity() {
                 if (isRecording) Color.rgb(252, 225, 226)
                 else Color.rgb(210, 242, 227))
             voiceTimer.text = if (hasDraft) formatDuration(pendingVoiceDurationMs)
-                else formatDuration(SystemClock.elapsedRealtime() - recordingStartedAt)
+                else formatDuration(SystemClock.elapsedRealtime() - VoiceRecordingService.recordingStartedAt)
+        }
+    }
+
+    private fun syncVoiceDraft() {
+        if (VoiceRecordingService.isRecording) return
+        val prefs = getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE)
+        val stored = prefs.getString("draft_filename", null)
+        val file = stored?.let { storedAudioFile(it) }
+        if (file != null && file.isFile && file.length() >= 512L) {
+            pendingVoiceFilename = stored
+            pendingVoiceDurationMs = prefs.getLong("draft_duration", 0L)
+            voiceTargetNoteId = prefs.getString("target_note_id", null)
+        } else if (stored != null) {
+            prefs.edit().remove("draft_filename").remove("draft_duration").apply()
         }
     }
 
     private fun onMicrophoneClicked() {
-        if (recorder != null) {
+        if (VoiceRecordingService.isRecording) {
             finishVoiceRecording()
             return
         }
+        syncVoiceDraft()
         if (pendingVoiceFilename != null) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 912)
@@ -1354,75 +1373,56 @@ class MainActivity : Activity() {
         startVoiceRecording()
     }
 
-    @Suppress("DEPRECATION")
     private fun startVoiceRecording() {
-        if (recorder != null || pendingVoiceFilename != null) return
+        if (VoiceRecordingService.isRecording || pendingVoiceFilename != null) return
         stopPlayback()
-        val directory = File(filesDir, "voice_notes")
-        if (!directory.exists() && !directory.mkdirs()) {
-            Toast.makeText(this, "امکان ذخیره صدا وجود ندارد", Toast.LENGTH_LONG).show()
-            return
-        }
-        val filename = UUID.randomUUID().toString() + ".m4a"
-        val file = storedAudioFile(filename) ?: return
-        var newRecorder: MediaRecorder? = null
         try {
-            newRecorder = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else MediaRecorder()
-            newRecorder.setAudioSource(MediaRecorder.AudioSource.MIC)
-            newRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            newRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            newRecorder.setAudioEncodingBitRate(64000)
-            newRecorder.setAudioSamplingRate(44100)
-            newRecorder.setOutputFile(file.absolutePath)
-            newRecorder.prepare()
-            newRecorder.start()
-            recorder = newRecorder
-            recordingFilename = filename
-            recordingStartedAt = SystemClock.elapsedRealtime()
-            refreshVoiceComposer()
-            uiHandler.post(voiceTicker)
+            startForegroundService(Intent(this, VoiceRecordingService::class.java).apply {
+                action = VoiceRecordingService.ACTION_START
+            })
+            uiHandler.postDelayed({
+                refreshVoiceComposer()
+                if (VoiceRecordingService.isRecording) {
+                    uiHandler.removeCallbacks(voiceTicker)
+                    uiHandler.post(voiceTicker)
+                } else {
+                    Toast.makeText(this, "ضبط شروع نشد؛ مجوز و وضعیت میکروفون را بررسی کنید",
+                        Toast.LENGTH_LONG).show()
+                }
+            }, 550L)
         } catch (_: Exception) {
-            runCatching { newRecorder?.release() }
-            file.delete()
-            Toast.makeText(this, "میکروفون در دسترس نیست یا ضبط انجام نشد", Toast.LENGTH_LONG).show()
-            refreshVoiceComposer()
+            Toast.makeText(this, "برای ضبط، برنامه باید باز و مجوز میکروفون فعال باشد",
+                Toast.LENGTH_LONG).show()
         }
     }
 
     private fun finishVoiceRecording() {
-        val currentRecorder = recorder ?: return
-        val filename = recordingFilename
-        val duration = SystemClock.elapsedRealtime() - recordingStartedAt
-        recorder = null
-        recordingFilename = null
+        if (!VoiceRecordingService.isRecording) return
+        startService(Intent(this, VoiceRecordingService::class.java).apply {
+            action = VoiceRecordingService.ACTION_STOP
+        })
         uiHandler.removeCallbacks(voiceTicker)
-        val completed = runCatching { currentRecorder.stop() }.isSuccess
-        runCatching { currentRecorder.release() }
-        val file = filename?.let { storedAudioFile(it) }
-        if (!completed || file == null || !file.isFile || file.length() < 512L) {
-            file?.delete()
-            Toast.makeText(this, "ضبط صدا کامل نشد. دوباره امتحان کنید", Toast.LENGTH_LONG).show()
-        } else {
-            pendingVoiceFilename = filename
-            pendingVoiceDurationMs = duration
-        }
-        refreshVoiceComposer()
+        uiHandler.postDelayed({
+            syncVoiceDraft()
+            refreshVoiceComposer()
+        }, 450L)
     }
 
     private fun discardVoiceRecording() {
-        if (recorder != null) {
-            val currentRecorder = recorder
-            recorder = null
-            uiHandler.removeCallbacks(voiceTicker)
-            runCatching { currentRecorder?.stop() }
-            runCatching { currentRecorder?.release() }
-            recordingFilename?.let { storedAudioFile(it)?.delete() }
-            recordingFilename = null
+        if (VoiceRecordingService.isRecording) {
+            startService(Intent(this, VoiceRecordingService::class.java).apply {
+                action = VoiceRecordingService.ACTION_CANCEL
+            })
         }
+        uiHandler.removeCallbacks(voiceTicker)
         pendingVoiceFilename?.let { storedAudioFile(it)?.delete() }
         pendingVoiceFilename = null
         pendingVoiceDurationMs = 0L
-        refreshVoiceComposer()
+        voiceTargetNoteId = null
+        getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE).edit()
+            .remove("draft_filename").remove("draft_duration")
+            .remove("target_note_id").apply()
+        uiHandler.postDelayed({ refreshVoiceComposer() }, 350L)
     }
 
     private fun showVoiceNoteNameDialog() {
@@ -1481,24 +1481,37 @@ class MainActivity : Activity() {
             Toast.makeText(this, "فایل صدای ضبط‌شده پیدا نشد", Toast.LENGTH_LONG).show()
             return
         }
-        notes.add(Note(
-            UUID.randomUUID().toString(),
-            title,
-            false,
-            palette[Random.nextInt(palette.size)],
-            audioFilename = filename,
-            audioDurationMs = pendingVoiceDurationMs
-        ))
+        val targetId = voiceTargetNoteId ?: getSharedPreferences(
+            VoiceRecordingService.PREFS, MODE_PRIVATE).getString("target_note_id", null)
+        val target = notes.firstOrNull { it.id == targetId }
+        if (target != null) {
+            target.audioAttachments.add(AudioAttachment(filename, title, pendingVoiceDurationMs))
+        } else {
+            notes.add(Note(
+                UUID.randomUUID().toString(),
+                title,
+                false,
+                palette[Random.nextInt(palette.size)],
+                audioFilename = filename,
+                audioDurationMs = pendingVoiceDurationMs,
+                category = selectedCategory
+            ))
+        }
         saveNotes()
         pendingVoiceFilename = null
         pendingVoiceDurationMs = 0L
+        voiceTargetNoteId = null
+        getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE).edit()
+            .remove("draft_filename").remove("draft_duration")
+            .remove("target_note_id").apply()
         refreshVoiceComposer()
         if (filter != Filter.ALL) {
             filter = Filter.ALL
             updateFilters()
         }
         renderNotes()
-        scroll.post { scroll.smoothScrollTo(0, noteList.bottom) }
+        if (target != null) showNoteDetail(target)
+        else scroll.post { scroll.smoothScrollTo(0, noteList.bottom) }
     }
 
     private fun stopPlayback() {
