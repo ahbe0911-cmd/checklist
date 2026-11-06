@@ -1033,7 +1033,15 @@ class MainActivity : Activity() {
     }
 
     private fun addNote() {
-        if (recorder != null) finishVoiceRecording()
+        if (VoiceRecordingService.isRecording) {
+            finishVoiceRecording()
+            uiHandler.postDelayed({
+                syncVoiceDraft()
+                if (pendingVoiceFilename != null) showVoiceNoteNameDialog()
+            }, 700L)
+            return
+        }
+        syncVoiceDraft()
         if (pendingVoiceFilename != null) {
             showVoiceNoteNameDialog()
             return
