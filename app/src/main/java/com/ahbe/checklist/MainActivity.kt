@@ -345,6 +345,18 @@ class MainActivity : Activity() {
         headerTop.addView(settingsButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
             marginStart = dp(10)
         })
+        // One additional independent control; all existing settings and notes remain intact.
+        val alarmButton = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_alarm_clock)
+            imageTintList = ColorStateList.valueOf(muted)
+            background = shape(Color.rgb(248, 250, 252), 10, softBorder)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            contentDescription = "آلارم"
+            setOnClickListener { com.ahbe.checklist.alarm.AlarmUi.show(this@MainActivity) }
+        }
+        headerTop.addView(alarmButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+            marginStart = dp(6)
+        })
 
         categoryBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2189,6 +2201,10 @@ class MainActivity : Activity() {
     @Deprecated("Uses the platform document picker for images")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == com.ahbe.checklist.alarm.AlarmUi.PICK_AUDIO) {
+            if (resultCode == RESULT_OK) com.ahbe.checklist.alarm.AlarmUi.receivePickedAudio(this, data)
+            return
+        }
         if (requestCode == 2016) {
             val prefs = getSharedPreferences("checklist_native", MODE_PRIVATE)
             val filename = prefs.getString("pending_audio_save", null)
@@ -2525,6 +2541,16 @@ class MainActivity : Activity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == com.ahbe.checklist.alarm.AlarmUi.LOCATION_PERMISSION) {
+            com.ahbe.checklist.alarm.AlarmUi.onLocationPermissionResult(
+                grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)
+            return
+        }
+        if (requestCode == com.ahbe.checklist.alarm.AlarmUi.MIC_PERMISSION) {
+            com.ahbe.checklist.alarm.AlarmUi.onMicPermissionResult(
+                grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)
+            return
+        }
         if (requestCode == 912) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 startVoiceRecording()
