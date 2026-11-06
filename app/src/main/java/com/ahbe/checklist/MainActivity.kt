@@ -1967,21 +1967,44 @@ class MainActivity : Activity() {
         controls.addView(play, LinearLayout.LayoutParams(dp(39), dp(39)))
         val wave = object : View(this) {
             private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+            private val waveform = FloatArray(44) { i ->
+                // Organic-looking, stable bars, rather than all bars oscillating in sync.
+                val low = kotlin.math.abs(kotlin.math.sin(i * 0.29 + filename.hashCode() * 0.001))
+                val middle = kotlin.math.abs(kotlin.math.sin(i * 1.17 + i * i * 0.011))
+                val peaks = kotlin.math.abs(kotlin.math.sin(i * 2.41 + 0.85))
+                val fade = 0.73 + 0.27 * kotlin.math.sin(Math.PI * i / 43)
+                ((0.14 + 0.38 * low + 0.31 * middle + 0.17 * peaks) * fade)
+                    .toFloat().coerceIn(0.12f, 0.98f)
+            }
             override fun onDraw(canvas: android.graphics.Canvas) {
                 super.onDraw(canvas)
-                val barCount = 34
+                val player = voicePlayer
+                val selected = playingNoteId == playerId && player != null
+                val fraction = if (selected) runCatching {
+                    (player!!.currentPosition.toFloat() / player.duration.coerceAtLeast(1))
+                        .coerceIn(0f, 1f)
+                }.getOrDefault(0f) else 0f
+                val barCount = waveform.size
                 val gap = width.toFloat() / barCount
-                val active = playingNoteId == playerId && voicePlayer?.isPlaying == true
-                val phase = if (active) SystemClock.uptimeMillis() / 90 else 0L
                 val radius = dp(2).toFloat()
+                val center = height / 2f
+                val minHeight = dp(4).toFloat()
                 for (i in 0 until barCount) {
-                    val weight = 0.26f + kotlin.math.abs(kotlin.math.sin(
-                        (i * 0.74 + (i % 7) * 0.35 + phase * 0.14))) * 0.70f
-                    val h = (height * weight).toFloat().coerceAtLeast(dp(3).toFloat())
-                    paint.color = if (active) indigo else Color.rgb(151, 167, 214)
+                    val played = (i + 0.5f) / barCount <= fraction
+                    val crest = if (selected && player?.isPlaying == true &&
+                        kotlin.math.abs((i + 0.5f) / barCount - fraction) < 0.065f) 1.09f else 1f
+                    val barHeight = (height * waveform[i] * crest).coerceIn(minHeight, height.toFloat())
+                    paint.color = if (played) indigo else Color.rgb(167, 178, 205)
                     val left = (i + 0.17f) * gap
-                    canvas.drawRoundRect(left, (height - h) / 2, left + gap * 0.48f,
-                        (height + h) / 2, radius, radius, paint)
+                    canvas.drawRoundRect(left, center - barHeight / 2, left + gap * 0.56f,
+                        center + barHeight / 2, radius, radius, paint)
+                }
+                if (selected) {
+                    paint.color = Color.rgb(66, 79, 173)
+                    val x = fraction * width
+                    canvas.drawCircle(x.coerceIn(dp(3).toFloat(),
+                        (width - dp(3)).coerceAtLeast(dp(3)).toFloat()),
+                        center, dp(2).toFloat(), paint)
                 }
             }
         }
