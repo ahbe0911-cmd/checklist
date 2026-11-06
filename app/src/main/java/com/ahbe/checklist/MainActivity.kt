@@ -92,7 +92,23 @@ class MainActivity : Activity() {
     private val notes = mutableListOf<Note>()
     private val categories = mutableListOf("کتابخانه", "کافی‌نت", "دانشگاه")
     private var selectedCategory = "کتابخانه"
-    private val categoryButtons = mutableMapOf<String, TextView>()
+    private val categoryButtons = mutableMapOf<String, LinearLayout>()
+    private data class TabStyle(val colorIndex: Int, val iconIndex: Int)
+    private val tabStyles = mutableMapOf<String, TabStyle>()
+    private val tabColors = intArrayOf(
+        Color.rgb(53, 116, 211), // blue - library
+        Color.rgb(13, 148, 136), // turquoise - internet cafe
+        Color.rgb(132, 79, 195), // violet - university
+        Color.rgb(213, 118, 48), // amber
+        Color.rgb(194, 71, 121), // rose
+        Color.rgb(67, 132, 93)   // green
+    )
+    private val tabColorNames = arrayOf("آبی", "فیروزه‌ای", "بنفش", "نارنجی", "صورتی", "سبز")
+    private val tabIconNames = arrayOf("کتاب", "رایانه", "دانشگاه", "پوشه", "کیف کار", "ستاره")
+    private val tabIcons = intArrayOf(R.drawable.ic_tab_book, R.drawable.ic_tab_computer,
+        R.drawable.ic_tab_university, R.drawable.ic_tab_folder,
+        R.drawable.ic_tab_briefcase, R.drawable.ic_tab_star)
+
     private var pickingImageForNoteId: String? = null
     private var voiceTargetNoteId: String? = null
     private var search = ""
@@ -169,6 +185,7 @@ class MainActivity : Activity() {
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         ReminderEngine.createChannel(this)
         loadCategories()
+        loadTabStyles()
         selectedCategory = getSharedPreferences("checklist_native", MODE_PRIVATE)
             .getString("active_category", "کتابخانه")?.takeIf { it in categories }
             ?: categories.first()
@@ -512,18 +529,33 @@ class MainActivity : Activity() {
         refreshVoiceComposer()
     }
 
+    private fun defaultTabStyle(name: String): TabStyle {
+        val defaultIndex = when (name) {
+            "کتابخانه" -> 0
+            "کافی‌نت" -> 1
+            "دانشگاه" -> 2
+            else -> categories.indexOf(name).coerceAtLeast(0) + 3
+        }
+        return TabStyle(defaultIndex % tabColors.size, defaultIndex % tabIcons.size)
+    }
+
+    private fun styleForCategory(name: String): TabStyle =
+        tabStyles[name] ?: defaultTabStyle(name)
+
     private fun renderCategoryTabs() {
         if (!::categoryBar.isInitialized) return
         categoryBar.removeAllViews()
         categoryButtons.clear()
         categories.forEach { category ->
-            val tab = label(category, 15f, ink, true).apply {
+            val tab = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
                 gravity = Gravity.CENTER
-                setPadding(dp(17), 0, dp(17), 0)
-                minWidth = dp(95)
-                maxLines = 1
+                setPadding(dp(8), 0, dp(8), 0)
+                minimumWidth = dp(94)
                 isClickable = true
                 isFocusable = true
+                contentDescription = "سربرگ " + category
                 setOnClickListener {
                     selectedCategory = category
                     persistSelectedCategory()
@@ -531,6 +563,22 @@ class MainActivity : Activity() {
                     renderNotes()
                 }
             }
+            val symbol = ImageView(this).apply {
+                setImageResource(tabIcons[styleForCategory(category).iconIndex])
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                contentDescription = tabIconNames[styleForCategory(category).iconIndex]
+            }
+            tab.addView(symbol, LinearLayout.LayoutParams(dp(19), dp(19)).apply {
+                marginEnd = dp(6)
+            })
+            val text = label(category, 13f, ink, true).apply {
+                typeface = titleFont // Far Vazir, independent of note fonts.
+                gravity = Gravity.CENTER
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                includeFontPadding = false
+            }
+            tab.addView(text, LinearLayout.LayoutParams(-2, -2))
             categoryBar.addView(tab, (
                 if (categories.size <= 3) LinearLayout.LayoutParams(0, -1, 1f)
                 else LinearLayout.LayoutParams(-2, -1)
@@ -542,11 +590,49 @@ class MainActivity : Activity() {
 
     private fun updateCategories() {
         categoryButtons.forEach { (category, tab) ->
+            val style = styleForCategory(category)
+            val tone = tabColors[style.colorIndex]
             val active = category == selectedCategory
-            tab.background = if (active) shape(Color.WHITE, 10, softBorder) else null
-            tab.setTextColor(if (active) indigo else muted)
+            tab.background = shape(
+                if (active) Color.argb(40, Color.red(tone), Color.green(tone), Color.blue(tone))
+                else Color.argb(14, Color.red(tone), Color.green(tone), Color.blue(tone)),
+                10, if (active) tone else Color.argb(50, Color.red(tone), Color.green(tone), Color.blue(tone))
+            )
+            tab.alpha = if (active) 1f else 0.86f
             tab.elevation = if (active) dp(2).toFloat() else 0f
+            (tab.getChildAt(0) as ImageView).imageTintList = ColorStateList.valueOf(tone)
+            (tab.getChildAt(1) as TextView).setTextColor(tone)
         }
+    }
+
+    private fun loadTabStyles() {
+        val raw = getSharedPreferences("checklist_native", MODE_PRIVATE)
+            .getString("category_visual_styles_v1", null) ?: return
+        runCatching {
+            val array = JSONArray(raw)
+            for (i in 0 until array.length()) {
+                val item = array.optJSONObject(i) ?: continue
+                val name = item.optString("category")
+                if (name.isBlank()) continue
+                tabStyles[name] = TabStyle(
+                    item.optInt("color", 0).coerceIn(0, tabColors.lastIndex),
+                    item.optInt("icon", 3).coerceIn(0, tabIcons.lastIndex)
+                )
+            }
+        }
+    }
+
+    private fun saveTabStyles() {
+        val array = JSONArray()
+        tabStyles.forEach { (name, style) ->
+            array.put(JSONObject().apply {
+                put("category", name)
+                put("color", style.colorIndex)
+                put("icon", style.iconIndex)
+            })
+        }
+        getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
+            .putString("category_visual_styles_v1", array.toString()).apply()
     }
 
     private fun persistSelectedCategory() {
@@ -626,6 +712,8 @@ class MainActivity : Activity() {
                     if (position >= 0) categories[position] = title
                     notes.filter { it.category == oldName }.forEach { it.category = title }
                     if (selectedCategory == oldName) selectedCategory = title
+                    tabStyles[title] = tabStyles.remove(oldName) ?: defaultTabStyle(oldName)
+                    saveTabStyles()
                     saveNotes()
                     saveCategories()
                     refreshCategoriesAfterEdit()
@@ -650,6 +738,8 @@ class MainActivity : Activity() {
                 .setNegativeButton("انصراف", null)
                 .setPositiveButton("حذف") { _, _ ->
                     categories.remove(name)
+                    tabStyles.remove(name)
+                    saveTabStyles()
                     if (selectedCategory == name) selectedCategory = categories.first()
                     saveCategories()
                     refreshCategoriesAfterEdit()
@@ -673,6 +763,8 @@ class MainActivity : Activity() {
                     .setPositiveButton("انتقال و حذف") { _, _ ->
                         notes.filter { it.category == name }.forEach { it.category = destination }
                         categories.remove(name)
+                        tabStyles.remove(name)
+                        saveTabStyles()
                         if (selectedCategory == name) selectedCategory = destination
                         saveNotes()
                         saveCategories()
@@ -680,6 +772,91 @@ class MainActivity : Activity() {
                         showCategoryManager()
                     }.show()
             }.show()
+    }
+
+    private fun showCategoryAppearance(name: String) {
+        val current = styleForCategory(name)
+        val outer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(20), dp(12), dp(20), dp(8))
+        }
+        val preview = label(name, 17f, tabColors[current.colorIndex], true).apply {
+            typeface = titleFont
+            gravity = Gravity.CENTER
+            background = shape(Color.rgb(246, 247, 251), 14, softBorder)
+        }
+        outer.addView(preview, LinearLayout.LayoutParams(-1, dp(48)))
+        var selectedColor = current.colorIndex
+        var selectedIcon = current.iconIndex
+        fun previewSelection() {
+            val tone = tabColors[selectedColor]
+            preview.setTextColor(tone)
+            preview.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                tabIcons[selectedIcon], 0, 0, 0
+            )
+            preview.compoundDrawableTintList = ColorStateList.valueOf(tone)
+            preview.compoundDrawablePadding = dp(8)
+        }
+        previewSelection()
+        outer.addView(label("رنگ سربرگ", 13f, ink, true),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
+        val colors = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        outer.addView(colors, LinearLayout.LayoutParams(-1, dp(49)))
+        for (i in tabColors.indices) {
+            val index = i
+            val color = tabColors[i]
+            val swatch = FrameLayout(this).apply {
+                background = shape(color, 15)
+                contentDescription = tabColorNames[index]
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    selectedColor = index
+                    previewSelection()
+                }
+            }
+            colors.addView(swatch, LinearLayout.LayoutParams(0, dp(28), 1f).apply {
+                marginStart = dp(4)
+                marginEnd = dp(4)
+            })
+        }
+        outer.addView(label("آیکن سربرگ", 13f, ink, true),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(13) })
+        val icons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        outer.addView(icons, LinearLayout.LayoutParams(-1, dp(50)))
+        for (i in tabIcons.indices) {
+            val index = i
+            icons.addView(ImageView(this).apply {
+                setImageResource(tabIcons[index])
+                imageTintList = ColorStateList.valueOf(tabColors[selectedColor])
+                setPadding(dp(7), dp(7), dp(7), dp(7))
+                contentDescription = tabIconNames[index]
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    selectedIcon = index
+                    previewSelection()
+                }
+            }, LinearLayout.LayoutParams(0, dp(45), 1f))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("ظاهر سربرگ «" + name + "»")
+            .setView(outer)
+            .setNegativeButton("انصراف", null)
+            .setPositiveButton("ذخیره") { _, _ ->
+                tabStyles[name] = TabStyle(selectedColor, selectedIcon)
+                saveTabStyles()
+                refreshCategoriesAfterEdit()
+                showCategoryManager()
+            }
+            .show()
     }
 
     private fun showCategoryManager() {
@@ -698,8 +875,23 @@ class MainActivity : Activity() {
                 setPadding(dp(4), dp(5), dp(4), dp(5))
             }
             items.addView(row, LinearLayout.LayoutParams(-1, -2))
-            row.addView(label(category, 15f, ink, true),
-                LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(label(category, 15f, tabColors[styleForCategory(category).colorIndex], true).apply {
+                typeface = titleFont
+                setCompoundDrawablesRelativeWithIntrinsicBounds(
+                    tabIcons[styleForCategory(category).iconIndex], 0, 0, 0
+                )
+                compoundDrawableTintList = ColorStateList.valueOf(
+                    tabColors[styleForCategory(category).colorIndex])
+                compoundDrawablePadding = dp(6)
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(label("ظاهر", 12f, indigo, true).apply {
+                typeface = titleFont
+                setPadding(dp(7), dp(12), dp(7), dp(12))
+                setOnClickListener {
+                    dialog.dismiss()
+                    showCategoryAppearance(category)
+                }
+            })
             row.addView(label("ویرایش", 12f, indigo, true).apply {
                 setPadding(dp(9), dp(12), dp(9), dp(12))
                 setOnClickListener {
@@ -740,6 +932,8 @@ class MainActivity : Activity() {
                 val name = normalizedCategoryName(nameInput.text.toString())
                     ?: return@setOnClickListener
                 categories.add(name)
+                tabStyles[name] = defaultTabStyle(name)
+                saveTabStyles()
                 selectedCategory = name
                 saveCategories()
                 refreshCategoriesAfterEdit()
