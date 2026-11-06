@@ -6,11 +6,14 @@ import android.app.AlertDialog
 import android.app.TimePickerDialog
 import android.app.AlarmManager
 import android.content.Context
+import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.Settings
+import android.provider.MediaStore
 import android.widget.NumberPicker
 import android.widget.Toast
 import android.icu.util.Calendar as PersianIcuCalendar
@@ -896,10 +899,8 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(7) })
             noteTextColumn.addView(playback,
                 LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(5) })
-            noteTextColumn.addView(label("اشتراک‌گذاری صوت", 11f, indigo, true).apply {
-                setPadding(dp(9), dp(7), dp(9), dp(7))
-                setOnClickListener { shareAudio(note.audioFilename) }
-            }, LinearLayout.LayoutParams(-2, -2))
+            noteTextColumn.addView(voiceActionBar(note.audioFilename),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         }
         val reminderTime = note.reminderAt
         if (reminderTime != null && reminderTime > System.currentTimeMillis()) {
@@ -1266,8 +1267,8 @@ class MainActivity : Activity() {
             content.addView(row)
             row.addView(actionLabel("پخش") { toggleVoicePlayback(note) },
                 LinearLayout.LayoutParams(0, -2, 1f))
-            row.addView(actionLabel("اشتراک‌گذاری") { shareAudio(note.audioFilename) },
-                LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(voiceActionBar(note.audioFilename),
+                LinearLayout.LayoutParams(0, -2, 2f).apply { marginStart = dp(6) })
         }
 
         if (note.imageFilenames.isNotEmpty()) {
@@ -1323,8 +1324,6 @@ class MainActivity : Activity() {
                         audioFilename = attachment.filename,
                         audioDurationMs = attachment.durationMs))
                 }, LinearLayout.LayoutParams(0, -2, 1f))
-                controls.addView(actionLabel("اشتراک‌گذاری") { shareAudio(attachment.filename) },
-                    LinearLayout.LayoutParams(0, -2, 1f))
                 controls.addView(actionLabel("حذف") {
                     AlertDialog.Builder(this).setTitle("حذف صوت")
                         .setMessage("فایل صوتی از این یادداشت حذف شود؟")
@@ -1338,6 +1337,8 @@ class MainActivity : Activity() {
                             showNoteDetail(note)
                         }.show()
                 }, LinearLayout.LayoutParams(0, -2, 1f))
+                content.addView(voiceActionBar(attachment.filename),
+                    LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
             }
         }
 
@@ -1501,6 +1502,23 @@ class MainActivity : Activity() {
     @Deprecated("Uses the platform document picker for images")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 2016) {
+            val prefs = getSharedPreferences("checklist_native", MODE_PRIVATE)
+            val filename = prefs.getString("pending_audio_save", null)
+            prefs.edit().remove("pending_audio_save").apply()
+            val original = filename?.let { storedAudioFile(it) }
+            val destination = if (resultCode == RESULT_OK) data?.data else null
+            if (destination != null && original != null && original.isFile) {
+                val saved = runCatching {
+                    contentResolver.openOutputStream(destination, "w")?.use { output ->
+                        original.inputStream().use { input -> input.copyTo(output) }
+                    } ?: error("No writable file")
+                }.isSuccess
+                Toast.makeText(this, if (saved) "فایل صوتی ذخیره شد" else
+                    "ذخیره فایل صوتی انجام نشد", Toast.LENGTH_LONG).show()
+            }
+            return
+        }
         if (requestCode != 2014) return
         val prefs = getSharedPreferences("checklist_native", MODE_PRIVATE)
         val targetId = pickingImageForNoteId ?: prefs.getString("image_target", null)
@@ -1548,20 +1566,114 @@ class MainActivity : Activity() {
         showNoteDetail(note)
     }
 
+
+    // Two clear, compact actions replace text-only sharing controls.
+    private fun audioActionButton(
+        caption: String, icon: Int, tint: Int, callback: () -> Unit
+    ): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        layoutDirection = View.LAYOUT_DIRECTION_RTL
+        gravity = Gravity.CENTER
+        setPadding(dp(5), dp(7), dp(5), dp(7))
+        background = shape(Color.rgb(244, 247, 255), 11, Color.rgb(226, 232, 248))
+        isClickable = true
+        isFocusable = true
+        contentDescription = caption
+        setOnClickListener { callback() }
+        addView(ImageView(this@MainActivity).apply {
+            setImageResource(icon)
+            imageTintList = ColorStateList.valueOf(tint)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+        }, LinearLayout.LayoutParams(dp(18), dp(18)).apply {
+            marginEnd = dp(5)
+        })
+        addView(label(caption, 11f, tint, true))
+    }
+
+    private fun voiceActionBar(filename: String): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        layoutDirection = View.LAYOUT_DIRECTION_RTL
+        gravity = Gravity.CENTER_VERTICAL
+        addView(audioActionButton("اشتراک‌گذاری", R.drawable.ic_share_audio, indigo) {
+            shareAudio(filename)
+        }, LinearLayout.LayoutParams(0, dp(39), 1.3f).apply {
+            marginEnd = dp(6)
+        })
+        addView(audioActionButton("دانلود", R.drawable.ic_download_audio, ink) {
+            saveAudioToDevice(filename)
+        }, LinearLayout.LayoutParams(0, dp(39), 1f))
+    }
+
+    /**
+     * On Android 10+, save a copy to Downloads / یادداشت‌های من without new
+     * storage permissions. Older versions use the system Save As picker.
+     */
+    private fun saveAudioToDevice(filename: String?) {
+        val original = filename?.let { storedAudioFile(it) }
+        if (original == null || !original.isFile) {
+            Toast.makeText(this, "فایل صوتی پیدا نشد", Toast.LENGTH_LONG).show()
+            return
+        }
+        val displayName = VoiceFileProvider.exportName(VoiceFileProvider.titleFor(this, original.name))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "audio/mp4")
+                put(MediaStore.MediaColumns.RELATIVE_PATH,
+                    Environment.DIRECTORY_DOWNLOADS + "/یادداشت‌های من")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            var destination: Uri? = null
+            val succeeded = runCatching {
+                destination = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: error("No downloads location")
+                contentResolver.openOutputStream(destination!!)?.use { output ->
+                    original.inputStream().use { input -> input.copyTo(output) }
+                } ?: error("Failed to write")
+                contentResolver.update(destination!!, ContentValues().apply {
+                    put(MediaStore.MediaColumns.IS_PENDING, 0)
+                }, null, null)
+            }.isSuccess
+            if (succeeded) {
+                Toast.makeText(this, "فایل «" + displayName + "» در دانلودها ذخیره شد",
+                    Toast.LENGTH_LONG).show()
+                return
+            }
+            destination?.let { runCatching { contentResolver.delete(it, null, null) } }
+        }
+        // Android 8/9, or the shared Downloads collection is unavailable.
+        getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
+            .putString("pending_audio_save", original.name).apply()
+        val choose = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "audio/mp4"
+            putExtra(Intent.EXTRA_TITLE, displayName)
+        }
+        runCatching { startActivityForResult(choose, 2016) }.onFailure {
+            Toast.makeText(this, "امکان بازکردن مسیر ذخیره وجود ندارد", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun shareAudio(filename: String?) {
         val file = filename?.let { storedAudioFile(it) }
         if (file == null || !file.isFile) {
             Toast.makeText(this, "فایل صوتی پیدا نشد", Toast.LENGTH_LONG).show()
             return
         }
+        val displayName = VoiceFileProvider.exportName(VoiceFileProvider.titleFor(this, file.name))
         val audioUri = VoiceFileProvider.uri(this, file.name)
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "audio/mp4"
             putExtra(Intent.EXTRA_STREAM, audioUri)
-            clipData = android.content.ClipData.newRawUri("voice", audioUri)
+            putExtra(Intent.EXTRA_TITLE, displayName)
+            clipData = android.content.ClipData.newRawUri(displayName, audioUri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        startActivity(Intent.createChooser(send, "اشتراک‌گذاری یادداشت صوتی"))
+        runCatching {
+            startActivity(Intent.createChooser(send, "اشتراک‌گذاری «" + displayName + "»"))
+        }.onFailure {
+            Toast.makeText(this, "اشتراک‌گذاری در دسترس نیست", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun addNote() {

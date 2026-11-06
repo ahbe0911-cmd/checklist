@@ -2,30 +2,68 @@ package com.ahbe.checklist
 
 import android.content.ContentProvider
 import android.content.ContentValues
+import android.content.Context
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.provider.OpenableColumns
+import org.json.JSONArray
 import java.io.File
 import java.io.FileNotFoundException
 
-/** Shares individual saved voice notes read-only through a temporary URI grant. */
+/**
+ * Shares a private audio file under the name the user entered for the note.
+ * The actual private filename stays UUID-based so old files and reminders are unchanged.
+ */
 class VoiceFileProvider : ContentProvider() {
     companion object {
-        private val SAFE_NAME = Regex("^[0-9a-fA-F-]{36}\\.m4a$")
-        fun uri(context: android.content.Context, filename: String): Uri =
+        private val SAFE_FILE = Regex("^[0-9a-fA-F-]{36}\\.m4a$")
+
+        // Preserve the original title, except characters forbidden in filenames.
+        fun exportName(title: String): String {
+            val sanitized = title.trim().map { ch ->
+                if (ch == '/' || ch == '\\' || ch.code < 32 || ch.code == 127) '_' else ch
+            }.joinToString("").trim().trimEnd('.')
+            val base = sanitized.ifBlank { "پیام صوتی" }
+            return if (base.endsWith(".m4a", ignoreCase = true)) base else base + ".m4a"
+        }
+
+        fun titleFor(context: Context, filename: String): String {
+            val prefs = context.getSharedPreferences("checklist_native", Context.MODE_PRIVATE)
+            val saved = prefs.getString("optimized_notes", "[]") ?: "[]"
+            val rows = runCatching { JSONArray(saved) }.getOrNull() ?: return "پیام صوتی"
+            for (i in 0 until rows.length()) {
+                val note = rows.optJSONObject(i) ?: continue
+                if (note.optString("audioFilename") == filename)
+                    return note.optString("text").ifBlank { "پیام صوتی" }
+                val attachments = note.optJSONArray("audioAttachments") ?: continue
+                for (j in 0 until attachments.length()) {
+                    val attachment = attachments.optJSONObject(j) ?: continue
+                    if (attachment.optString("filename") == filename)
+                        return attachment.optString("title").ifBlank { "پیام صوتی" }
+                }
+            }
+            return "پیام صوتی"
+        }
+
+        fun uri(context: Context, filename: String): Uri =
             Uri.Builder().scheme("content")
                 .authority(context.packageName + ".voicefiles")
-                .appendPath(filename).build()
+                .appendPath(filename)
+                .appendPath(exportName(titleFor(context, filename)))
+                .build()
     }
 
     override fun onCreate(): Boolean = true
 
     private fun fileFor(uri: Uri): File {
-        if (uri.authority != context?.packageName + ".voicefiles") throw FileNotFoundException()
-        val name = uri.lastPathSegment ?: throw FileNotFoundException()
-        if (uri.pathSegments.size != 1 || !SAFE_NAME.matches(name)) throw FileNotFoundException()
-        val file = File(File(context!!.filesDir, "voice_notes"), name)
+        val ctx = context ?: throw FileNotFoundException()
+        if (uri.authority != ctx.packageName + ".voicefiles") throw FileNotFoundException()
+        val segments = uri.pathSegments
+        if (segments.size !in 1..2 || !SAFE_FILE.matches(segments[0]))
+            throw FileNotFoundException()
+        val file = File(File(ctx.filesDir, "voice_notes"), segments[0])
         if (!file.isFile) throw FileNotFoundException()
         return file
     }
@@ -45,12 +83,13 @@ class VoiceFileProvider : ContentProvider() {
         selectionArgs: Array<out String>?, sortOrder: String?
     ): Cursor {
         val file = fileFor(uri)
-        val columns = projection ?: arrayOf("_display_name", "_size")
+        val title = exportName(titleFor(context!!, file.name))
+        val columns = projection ?: arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
         val cursor = MatrixCursor(columns)
         cursor.addRow(columns.map {
             when (it) {
-                "_display_name" -> file.name
-                "_size" -> file.length()
+                OpenableColumns.DISPLAY_NAME -> title
+                OpenableColumns.SIZE -> file.length()
                 else -> null
             }
         })
