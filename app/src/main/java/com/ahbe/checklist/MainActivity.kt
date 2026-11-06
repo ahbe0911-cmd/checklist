@@ -746,6 +746,288 @@ class MainActivity : Activity() {
         })
     }
 
+    private fun toggleCompleted(note: Note) {
+        note.completed = !note.completed
+        if (note.completed && note.reminderAt != null) {
+            ReminderEngine.cancel(this, note.id)
+            PhoneCalendarStore.deleteEvent(this, note.calendarEventId)
+            note.calendarEventId = null
+            note.reminderAt = null
+        }
+        saveNotes()
+        renderNotes()
+    }
+
+    private fun removeNoteTree(note: Note) {
+        notes.filter { it.parentId == note.id }.toList().forEach { removeNoteTree(it) }
+        ReminderEngine.cancel(this, note.id)
+        PhoneCalendarStore.deleteEvent(this, note.calendarEventId)
+        if (playingNoteId == note.id) stopPlayback()
+        note.audioFilename?.let { storedAudioFile(it)?.delete() }
+        note.audioAttachments.forEach { storedAudioFile(it.filename)?.delete() }
+        note.imageFilenames.forEach { storedImageFile(it)?.delete() }
+        notes.removeAll { it.id == note.id }
+    }
+
+    private fun actionLabel(text: String, callback: () -> Unit): TextView =
+        label(text, 14f, indigo, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(13), dp(12), dp(13), dp(12))
+            background = shape(Color.rgb(240, 244, 255), 12, Color.rgb(218, 225, 249))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { callback() }
+        }
+
+    /** A note is a folder-like node: it can contain children and independent attachments. */
+    private fun showNoteDetail(note: Note) {
+        if (notes.none { it.id == note.id } || isFinishing) return
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(18), dp(10), dp(18), dp(15))
+        }
+        val scroller = ScrollView(this).apply { addView(content) }
+        val detail = AlertDialog.Builder(this)
+            .setTitle(note.text)
+            .setView(scroller)
+            .setPositiveButton("بستن", null)
+            .create()
+        content.addView(label("دسته: " + note.category, 12f, muted),
+            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+
+        val firstRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        content.addView(firstRow, LinearLayout.LayoutParams(-1, -2))
+        firstRow.addView(actionLabel("افزودن زیرشاخه") {
+            detail.dismiss()
+            showAddChildDialog(note)
+        }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(6) })
+        firstRow.addView(actionLabel("افزودن عکس") {
+            pickingImageForNoteId = note.id
+            getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
+                .putString("image_target", note.id).apply()
+            detail.dismiss()
+            val choose = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "image/*"
+            }
+            startActivityForResult(choose, 2014)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+
+        val secondRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        content.addView(secondRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        secondRow.addView(actionLabel("ضبط صوت در این یادداشت") {
+            voiceTargetNoteId = note.id
+            getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE).edit()
+                .putString("target_note_id", note.id).apply()
+            detail.dismiss()
+            onMicrophoneClicked()
+        }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(6) })
+        secondRow.addView(actionLabel(if (note.completed) "بازگرداندن به جاری" else "علامت انجام") {
+            toggleCompleted(note)
+            detail.dismiss()
+            showNoteDetail(note)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+
+        if (note.audioFilename != null) {
+            content.addView(label("صدای اصلی یادداشت", 15f, ink, true),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(18) })
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            content.addView(row)
+            row.addView(actionLabel("پخش") { toggleVoicePlayback(note) },
+                LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(actionLabel("اشتراک‌گذاری") { shareAudio(note.audioFilename) },
+                LinearLayout.LayoutParams(0, -2, 1f))
+        }
+
+        if (note.imageFilenames.isNotEmpty()) {
+            content.addView(label("عکس‌های این یادداشت", 16f, ink, true),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(19) })
+            note.imageFilenames.toList().forEach { name ->
+                val file = storedImageFile(name)
+                if (file != null && file.isFile) {
+                    val picture = ImageView(this).apply {
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        val bounds = android.graphics.BitmapFactory.Options().apply {
+                            inJustDecodeBounds = true
+                        }
+                        android.graphics.BitmapFactory.decodeFile(file.absolutePath, bounds)
+                        val scale = (maxOf(bounds.outWidth, bounds.outHeight) / 960).coerceAtLeast(1)
+                        val options = android.graphics.BitmapFactory.Options().apply {
+                            inSampleSize = scale
+                        }
+                        setImageBitmap(android.graphics.BitmapFactory.decodeFile(file.absolutePath, options))
+                        background = shape(Color.rgb(240, 244, 247), 10)
+                    }
+                    content.addView(picture, LinearLayout.LayoutParams(-1, dp(170)).apply {
+                        topMargin = dp(9)
+                    })
+                    content.addView(actionLabel("حذف این عکس") {
+                        AlertDialog.Builder(this).setTitle("حذف عکس")
+                            .setMessage("این عکس از یادداشت حذف شود؟")
+                            .setNegativeButton("انصراف", null)
+                            .setPositiveButton("حذف") { _, _ ->
+                                note.imageFilenames.remove(name)
+                                file.delete()
+                                saveNotes()
+                                renderNotes()
+                                detail.dismiss()
+                                showNoteDetail(note)
+                            }.show()
+                    }, LinearLayout.LayoutParams(-1, -2))
+                }
+            }
+        }
+
+        if (note.audioAttachments.isNotEmpty()) {
+            content.addView(label("صداهای پیوست", 16f, ink, true),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(19) })
+            note.audioAttachments.toList().forEach { attachment ->
+                content.addView(label(attachment.title + "  " + formatDuration(attachment.durationMs),
+                    14f, ink), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(11) })
+                val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                content.addView(controls)
+                controls.addView(actionLabel("پخش") {
+                    toggleVoicePlayback(Note("attachment-" + attachment.filename,
+                        attachment.title, false, Color.WHITE,
+                        audioFilename = attachment.filename,
+                        audioDurationMs = attachment.durationMs))
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                controls.addView(actionLabel("اشتراک‌گذاری") { shareAudio(attachment.filename) },
+                    LinearLayout.LayoutParams(0, -2, 1f))
+                controls.addView(actionLabel("حذف") {
+                    AlertDialog.Builder(this).setTitle("حذف صوت")
+                        .setMessage("فایل صوتی از این یادداشت حذف شود؟")
+                        .setNegativeButton("انصراف", null)
+                        .setPositiveButton("حذف") { _, _ ->
+                            note.audioAttachments.remove(attachment)
+                            storedAudioFile(attachment.filename)?.delete()
+                            saveNotes()
+                            renderNotes()
+                            detail.dismiss()
+                            showNoteDetail(note)
+                        }.show()
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+            }
+        }
+
+        val children = notes.filter { it.parentId == note.id }
+        content.addView(label("زیرشاخه‌ها (" + fa(children.size) + ")", 16f, ink, true),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(20) })
+        if (children.isEmpty()) {
+            content.addView(label("هنوز زیرشاخه‌ای ثبت نشده است.", 13f, muted))
+        } else {
+            children.forEach { child ->
+                content.addView(actionLabel("◀  " + child.text) {
+                    detail.dismiss()
+                    showNoteDetail(child)
+                }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+            }
+        }
+        detail.show()
+    }
+
+    private fun showAddChildDialog(parent: Note) {
+        val field = EditText(this).apply {
+            hint = "عنوان زیرشاخه..."
+            typeface = textFont
+            setSingleLine(true)
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+        }
+        val dialog = AlertDialog.Builder(this).setTitle("زیرشاخه جدید")
+            .setView(field)
+            .setNegativeButton("انصراف") { _, _ -> showNoteDetail(parent) }
+            .setPositiveButton("ثبت", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val title = field.text.toString().trim()
+                if (title.isEmpty()) {
+                    field.error = "عنوان را وارد کنید"
+                    return@setOnClickListener
+                }
+                notes.add(Note(UUID.randomUUID().toString(), title, false,
+                    palette[Random.nextInt(palette.size)],
+                    category = parent.category, parentId = parent.id))
+                saveNotes()
+                renderNotes()
+                dialog.dismiss()
+                showNoteDetail(parent)
+            }
+        }
+        dialog.show()
+    }
+
+    private fun storedImageFile(filename: String): File? {
+        if (!Regex("^[0-9a-fA-F-]{36}\\.(jpg|png|webp)$").matches(filename)) return null
+        return File(File(filesDir, "note_images"), filename)
+    }
+
+    @Deprecated("Uses the platform document picker for images")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != 2014) return
+        val prefs = getSharedPreferences("checklist_native", MODE_PRIVATE)
+        val targetId = pickingImageForNoteId ?: prefs.getString("image_target", null)
+        pickingImageForNoteId = null
+        prefs.edit().remove("image_target").apply()
+        val note = notes.firstOrNull { it.id == targetId } ?: return
+        val uri = if (resultCode == RESULT_OK) data?.data else null
+        if (uri == null) {
+            showNoteDetail(note)
+            return
+        }
+        val extension = when (contentResolver.getType(uri)) {
+            "image/png" -> "png"
+            "image/webp" -> "webp"
+            else -> "jpg"
+        }
+        val dir = File(filesDir, "note_images")
+        dir.mkdirs()
+        val filename = UUID.randomUUID().toString() + "." + extension
+        val file = storedImageFile(filename) ?: return
+        val saved = runCatching {
+            contentResolver.openInputStream(uri)?.use { source ->
+                file.outputStream().use { target ->
+                    val buffer = ByteArray(8192)
+                    var total = 0L
+                    while (true) {
+                        val read = source.read(buffer)
+                        if (read < 0) break
+                        total += read
+                        if (total > 15L * 1024 * 1024) error("Image too large")
+                        target.write(buffer, 0, read)
+                    }
+                    total > 0L
+                }
+            } == true
+        }.getOrDefault(false)
+        if (saved) {
+            note.imageFilenames.add(filename)
+            saveNotes()
+            renderNotes()
+        } else {
+            file.delete()
+            Toast.makeText(this, "تصویر ذخیره نشد یا حجم آن بیشتر از ۱۵ مگابایت است", Toast.LENGTH_LONG).show()
+        }
+        showNoteDetail(note)
+    }
+
+    private fun shareAudio(filename: String?) {
+        val file = filename?.let { storedAudioFile(it) }
+        if (file == null || !file.isFile) {
+            Toast.makeText(this, "فایل صوتی پیدا نشد", Toast.LENGTH_LONG).show()
+            return
+        }
+        val audioUri = VoiceFileProvider.uri(this, file.name)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "audio/mp4"
+            putExtra(Intent.EXTRA_STREAM, audioUri)
+            clipData = android.content.ClipData.newRawUri("voice", audioUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(send, "اشتراک‌گذاری یادداشت صوتی"))
+    }
+
     private fun addNote() {
         if (recorder != null) finishVoiceRecording()
         if (pendingVoiceFilename != null) {
