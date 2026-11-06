@@ -1004,6 +1004,13 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
         }
         header.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+        note.dueAt?.let { due ->
+            page.addView(label("تاریخ اجرا: " + formatDueDate(due), 12f,
+                Color.rgb(195, 45, 52), true).apply {
+                typeface = textFont
+                setPadding(dp(20), dp(8), dp(20), dp(3))
+            }, LinearLayout.LayoutParams(-1, -2))
+        }
 
         val content = FrameLayout(this)
         page.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -1191,7 +1198,7 @@ class MainActivity : Activity() {
                 setPadding(0, 0, 0, dp(11))
                 setOnClickListener {
                     detail.dismiss()
-                    notes.firstOrNull { it.id == note.parentId }?.let { showNoteDetail(it) }
+                    notes.firstOrNull { it.id == note.parentId }?.let { showNotePage(it) }
                 }
             }, LinearLayout.LayoutParams(-1, -2))
         }
@@ -1368,7 +1375,7 @@ class MainActivity : Activity() {
                 setPadding(0, dp(7), 0, dp(7))
                 setOnClickListener {
                     detail.dismiss()
-                    showNoteDetail(child)
+                    showNotePage(child)
                 }
             }, LinearLayout.LayoutParams(-1, -2))
             child.dueAt?.let { due ->
@@ -1472,7 +1479,7 @@ class MainActivity : Activity() {
                 saveNotes()
                 renderNotes()
                 detail.dismiss()
-                showNoteDetail(note, true)
+                renderOpenNotePage()
             }
         }
         sendChild.setOnClickListener { submitChild() }
@@ -2035,8 +2042,10 @@ class MainActivity : Activity() {
             .remove("target_note_id").apply()
         refreshVoiceComposer()
         renderNotes()
-        if (target != null) showNoteDetail(target)
-        else scroll.post { scroll.smoothScrollTo(0, noteList.bottom) }
+        if (target != null) {
+            if (currentPageNoteId == target.id) renderOpenNotePage()
+            else showNotePage(target)
+        } else scroll.post { scroll.smoothScrollTo(0, noteList.bottom) }
     }
 
     private fun stopPlayback() {
