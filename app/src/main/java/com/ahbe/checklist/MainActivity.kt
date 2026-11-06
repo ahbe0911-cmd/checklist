@@ -1899,10 +1899,6 @@ class MainActivity : Activity() {
             .remove("draft_filename").remove("draft_duration")
             .remove("target_note_id").apply()
         refreshVoiceComposer()
-        if (filter != Filter.ALL) {
-            filter = Filter.ALL
-            updateFilters()
-        }
         renderNotes()
         if (target != null) showNoteDetail(target)
         else scroll.post { scroll.smoothScrollTo(0, noteList.bottom) }
