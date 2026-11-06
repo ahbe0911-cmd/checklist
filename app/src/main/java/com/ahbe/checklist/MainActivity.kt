@@ -104,6 +104,12 @@ class MainActivity : Activity() {
     private var searchTextSize = 12
     private var reminderTextSize = 11
     private var headerTextSize = 25
+    // The home screen and the in-app note screen share one Activity, not an AlertDialog.
+    private lateinit var screenRoot: FrameLayout
+    private lateinit var homePage: LinearLayout
+    private var notePage: LinearLayout? = null
+    private var currentPageNoteId: String? = null
+
     private lateinit var headingLabel: TextView
     private lateinit var searchField: EditText
 
@@ -168,7 +174,20 @@ class MainActivity : Activity() {
         buildScreen()
         updateDate()
         renderNotes()
+        savedInstanceState?.getString("opened_note_id")?.let { id ->
+            notes.firstOrNull { it.id == id }?.let { showNotePage(it) }
+        }
         requestInitialPermissions()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        currentPageNoteId?.let { outState.putString("opened_note_id", it) }
+        super.onSaveInstanceState(outState)
+    }
+
+    @Deprecated("Back navigation is handled by the current note page.")
+    override fun onBackPressed() {
+        if (currentPageNoteId != null) navigateBackFromNote() else super.onBackPressed()
     }
 
     override fun onResume() {
@@ -227,7 +246,10 @@ class MainActivity : Activity() {
             layoutDirection = View.LAYOUT_DIRECTION_RTL
             setBackgroundColor(surface)
         }
-        setContentView(root)
+        screenRoot = FrameLayout(this)
+        homePage = root
+        screenRoot.addView(homePage, FrameLayout.LayoutParams(-1, -1))
+        setContentView(screenRoot)
 
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -768,9 +790,10 @@ class MainActivity : Activity() {
         emptyState.visibility = if (visible.isEmpty()) View.VISIBLE else View.GONE
         visible.forEachIndexed { index, note -> addNoteCard(note, index + 1) }
         updateProgress()
+        renderOpenNotePage()
     }
 
-    private fun addNoteCard(note: Note, index: Int) {
+    private fun addNoteCard(note: Note, index: Int, destination: LinearLayout = noteList) {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -780,7 +803,7 @@ class MainActivity : Activity() {
             elevation = dp(2).toFloat()
             alpha = if (note.completed) 0.78f else 1f
         }
-        noteList.addView(card, LinearLayout.LayoutParams(-1, -2).apply {
+        destination.addView(card, LinearLayout.LayoutParams(-1, -2).apply {
             bottomMargin = dp(12)
         })
 
@@ -790,7 +813,7 @@ class MainActivity : Activity() {
             isClickable = true
             isFocusable = true
             contentDescription = "بازکردن یادداشت " + note.text
-            setOnClickListener { showNoteDetail(note) }
+            setOnClickListener { showNotePage(note) }
         }
         card.addView(tapArea, LinearLayout.LayoutParams(0, -2, 1f))
 
@@ -923,6 +946,123 @@ class MainActivity : Activity() {
         card.addView(remove, LinearLayout.LayoutParams(dp(36), dp(36)).apply {
             marginStart = dp(8)
         })
+    }
+
+    /**
+     * Inline navigation. Tapping a note opens this full-screen view in the existing
+     * Activity; only tapping "افزودن" opens the pre-existing composer dialog.
+     */
+    private fun showNotePage(note: Note) {
+        if (notes.none { it.id == note.id }) return
+        currentPageNoteId = note.id
+        renderOpenNotePage()
+    }
+
+    private fun renderOpenNotePage() {
+        if (!::screenRoot.isInitialized) return
+        val id = currentPageNoteId ?: return
+        val note = notes.firstOrNull { it.id == id }
+        if (note == null) {
+            closeNotePage()
+            return
+        }
+
+        notePage?.let { screenRoot.removeView(it) }
+        val page = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setBackgroundColor(surface)
+        }
+        notePage = page
+        homePage.visibility = View.GONE
+        screenRoot.addView(page, FrameLayout.LayoutParams(-1, -1))
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(18), dp(16), dp(18), dp(16))
+            background = shape(Color.WHITE, 0)
+            elevation = dp(2).toFloat()
+        }
+        page.addView(header, LinearLayout.LayoutParams(-1, -2))
+        val back = label("‹  بازگشت", 14f, indigo, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(4), dp(7), dp(4), dp(7))
+            contentDescription = "بازگشت به صفحه قبل"
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { navigateBackFromNote() }
+        }
+        header.addView(back, LinearLayout.LayoutParams(-2, dp(44)).apply {
+            marginEnd = dp(14)
+        })
+        val title = label(note.text, 21f, ink, true).apply {
+            typeface = titleFont
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
+        }
+        header.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+
+        val content = FrameLayout(this)
+        page.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
+        val listScroll = ScrollView(this).apply {
+            isFillViewport = true
+            clipToPadding = false
+            isVerticalScrollBarEnabled = false
+            setPadding(dp(20), dp(16), dp(20), dp(20))
+        }
+        content.addView(listScroll, FrameLayout.LayoutParams(-1, -1))
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+        listScroll.addView(list, ScrollView.LayoutParams(-1, -2))
+
+        val children = notes.filter { it.parentId == note.id }
+        children.forEachIndexed { index, child -> addNoteCard(child, index + 1, list) }
+        if (children.isEmpty()) {
+            val empty = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(dp(12), dp(65), dp(12), dp(10))
+            }
+            list.addView(empty, LinearLayout.LayoutParams(-1, -2))
+            empty.addView(label("هنوز موردی ثبت نشده است", 17f, muted).apply {
+                gravity = Gravity.CENTER
+            })
+        }
+
+        // Keep the page visually quiet: media and date tools remain in the Add dialog.
+        val add = label("افزودن", 17f, Color.WHITE, true).apply {
+            gravity = Gravity.CENTER
+            background = shape(ink, 16)
+            elevation = dp(3).toFloat()
+            isClickable = true
+            isFocusable = true
+            contentDescription = "افزودن مورد به " + note.text
+            setOnClickListener { showNoteDetail(note) }
+        }
+        page.addView(add, LinearLayout.LayoutParams(-1, dp(54)).apply {
+            marginStart = dp(20)
+            marginEnd = dp(20)
+            topMargin = dp(9)
+            bottomMargin = dp(16)
+        })
+    }
+
+    private fun navigateBackFromNote() {
+        val open = currentPageNoteId?.let { id -> notes.firstOrNull { it.id == id } }
+        val parent = open?.parentId?.let { id -> notes.firstOrNull { it.id == id } }
+        if (parent != null) showNotePage(parent) else closeNotePage()
+    }
+
+    private fun closeNotePage() {
+        currentPageNoteId = null
+        notePage?.let { screenRoot.removeView(it) }
+        notePage = null
+        if (::homePage.isInitialized) homePage.visibility = View.VISIBLE
     }
 
     private fun toggleCompleted(note: Note) {
