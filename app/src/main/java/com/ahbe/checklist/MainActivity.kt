@@ -128,6 +128,9 @@ class MainActivity : Activity() {
     private lateinit var homePage: LinearLayout
     private var notePage: LinearLayout? = null
     private var currentPageNoteId: String? = null
+    private var pageVoiceButton: ImageButton? = null
+    private var pageVoiceStatus: TextView? = null
+    private var pageSendButton: ImageButton? = null
 
     private lateinit var headingLabel: TextView
     private lateinit var searchField: EditText
@@ -167,10 +170,12 @@ class MainActivity : Activity() {
             if (VoiceRecordingService.isRecording) {
                 voiceTimer.text = formatDuration(
                     SystemClock.elapsedRealtime() - VoiceRecordingService.recordingStartedAt)
+                updatePageVoiceControls()
                 uiHandler.postDelayed(this, 400L)
             } else {
                 syncVoiceDraft()
                 refreshVoiceComposer()
+                updatePageVoiceControls()
             }
         }
     }
@@ -217,6 +222,7 @@ class MainActivity : Activity() {
             ReminderEngine.restore(this)
             syncVoiceDraft()
             refreshVoiceComposer()
+            updatePageVoiceControls()
             if (VoiceRecordingService.isRecording) {
                 uiHandler.removeCallbacks(voiceTicker)
                 uiHandler.post(voiceTicker)
@@ -283,7 +289,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        header.addView(headerTop, LinearLayout.LayoutParams(-1, dp(49)))
+        header.addView(headerTop, LinearLayout.LayoutParams(-1, dp(64)))
 
         val heading = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -296,8 +302,16 @@ class MainActivity : Activity() {
         }
         heading.addView(headingLabel)
 
-        dateLabel = label("", 13f, muted, true).apply { typeface = dateFont }
-        heading.addView(dateLabel)
+        dateLabel = label("", 15f, Color.rgb(58, 77, 114), true).apply {
+            typeface = titleFont
+            gravity = Gravity.CENTER
+            background = shape(Color.rgb(236, 242, 255), 11, Color.rgb(215, 227, 250))
+            setPadding(dp(11), dp(4), dp(11), dp(4))
+            maxLines = 1
+        }
+        heading.addView(dateLabel, LinearLayout.LayoutParams(-2, -2).apply {
+            topMargin = dp(4)
+        })
 
         val progressBlock = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1224,7 +1238,30 @@ class MainActivity : Activity() {
 
         val children = notes.filter { it.parentId == note.id }
         children.forEachIndexed { index, child -> addNoteCard(child, index + 1, list) }
-        if (children.isEmpty()) {
+
+        note.audioAttachments.forEach { attachment ->
+            val voiceCard = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
+                setPadding(dp(12), dp(11), dp(12), dp(11))
+                background = shape(Color.WHITE, 13, softBorder)
+            }
+            list.addView(voiceCard, LinearLayout.LayoutParams(-1, -2).apply {
+                bottomMargin = dp(9)
+            })
+            voiceCard.addView(label(attachment.title, 15f, ink, true).apply {
+                typeface = titleFont
+            })
+            voiceCard.addView(actionLabel("پخش  " + formatDuration(attachment.durationMs)) {
+                toggleVoicePlayback(Note("attached-" + attachment.filename,
+                    attachment.title, false, Color.WHITE,
+                    audioFilename = attachment.filename,
+                    audioDurationMs = attachment.durationMs))
+            })
+            voiceCard.addView(voiceActionBar(attachment.filename),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
+        }
+        if (children.isEmpty() && note.audioAttachments.isEmpty()) {
             val empty = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
@@ -1236,22 +1273,163 @@ class MainActivity : Activity() {
             })
         }
 
-        // Keep the page visually quiet: media and date tools remain in the Add dialog.
-        val add = label("افزودن", 17f, Color.WHITE, true).apply {
+
+        // Record and send directly into the currently open note.
+        val composer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(7), dp(8), dp(7))
+            background = shape(Color.WHITE, 16, softBorder)
+        }
+        page.addView(composer, LinearLayout.LayoutParams(-1, -2).apply {
+            marginStart = dp(16)
+            marginEnd = dp(16)
+            topMargin = dp(7)
+            bottomMargin = dp(8)
+        })
+        val entryField = EditText(this).apply {
+            hint = "یک مورد جدید بنویس..."
+            setSingleLine(true)
+            textSize = 14f
+            typeface = textFont
+            setTextColor(ink)
+            setHintTextColor(muted)
+            background = null
+            setPadding(dp(8), 0, dp(8), 0)
+            imeOptions = EditorInfo.IME_ACTION_DONE
+        }
+        composer.addView(entryField, LinearLayout.LayoutParams(0, dp(45), 1f))
+        val mic = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_microphone)
+            background = shape(Color.rgb(240, 245, 251), 12, softBorder)
+            imageTintList = ColorStateList.valueOf(indigo)
+            setPadding(dp(11), dp(11), dp(11), dp(11))
+            contentDescription = "ضبط صدا در این یادداشت"
+            setOnClickListener { handlePageMicrophone(note) }
+        }
+        pageVoiceButton = mic
+        composer.addView(mic, LinearLayout.LayoutParams(dp(45), dp(45)).apply {
+            marginStart = dp(6)
+        })
+        val send = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_send_message)
+            imageTintList = ColorStateList.valueOf(Color.WHITE)
+            background = shape(ink, 12)
+            setPadding(dp(11), dp(11), dp(11), dp(11))
+            contentDescription = "ارسال متن یا صدای یادداشت"
+        }
+        pageSendButton = send
+        composer.addView(send, LinearLayout.LayoutParams(dp(45), dp(45)).apply {
+            marginStart = dp(6)
+        })
+        val submitPageEntry = {
+            syncVoiceDraft()
+            when {
+                VoiceRecordingService.isRecording -> handlePageMicrophone(note)
+                pendingVoiceFilename != null -> showVoiceNoteNameDialog()
+                else -> {
+                    val value = entryField.text.toString().trim()
+                    if (value.isEmpty()) {
+                        entryField.error = "متن را بنویس یا میکروفون را بزن"
+                    } else {
+                        notes.add(Note(UUID.randomUUID().toString(), value, false,
+                            palette[Random.nextInt(palette.size)],
+                            category = note.category, parentId = note.id))
+                        saveNotes()
+                        renderNotes()
+                    }
+                }
+            }
+        }
+        send.setOnClickListener { submitPageEntry() }
+        entryField.setOnEditorActionListener { _, action, _ ->
+            if (action == EditorInfo.IME_ACTION_DONE) {
+                submitPageEntry()
+                true
+            } else false
+        }
+        pageVoiceStatus = label("", 12f, Color.rgb(176, 58, 66), true).apply {
+            typeface = titleFont
             gravity = Gravity.CENTER
-            background = shape(ink, 16)
-            elevation = dp(3).toFloat()
+            visibility = View.GONE
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+        }
+        page.addView(pageVoiceStatus, LinearLayout.LayoutParams(-1, -2))
+        page.addView(label("افزودن عکس، تاریخ یا جزئیات", 12f, indigo, true).apply {
+            typeface = titleFont
+            gravity = Gravity.CENTER
             isClickable = true
             isFocusable = true
-            contentDescription = "افزودن مورد به " + note.text
+            setPadding(dp(5), dp(8), dp(5), dp(11))
             setOnClickListener { showNoteDetail(note) }
+        }, LinearLayout.LayoutParams(-1, -2))
+        updatePageVoiceControls()
+    }
+
+
+    private fun updatePageVoiceControls() {
+        val button = pageVoiceButton ?: return
+        val noteId = currentPageNoteId ?: return
+        val prefs = getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE)
+        val targetId = prefs.getString("target_note_id", voiceTargetNoteId)
+        val recording = VoiceRecordingService.isRecording && targetId == noteId
+        val ready = pendingVoiceFilename != null && (voiceTargetNoteId == noteId || targetId == noteId)
+        button.setImageResource(if (recording) R.drawable.ic_stop_voice else R.drawable.ic_microphone)
+        button.background = if (recording) shape(Color.rgb(203, 62, 73), 12)
+            else shape(Color.rgb(240, 245, 251), 12, softBorder)
+        button.imageTintList = ColorStateList.valueOf(if (recording) Color.WHITE else indigo)
+        button.contentDescription = if (recording) "توقف ضبط و نام‌گذاری صدا" else "شروع ضبط صدا"
+        pageVoiceStatus?.apply {
+            visibility = if (recording || ready) View.VISIBLE else View.GONE
+            text = when {
+                recording -> "● در حال ضبط صدا  " + formatDuration(
+                    SystemClock.elapsedRealtime() - VoiceRecordingService.recordingStartedAt)
+                ready -> "صدا آماده است؛ ارسال را بزن تا نام‌گذاری شود."
+                else -> ""
+            }
         }
-        page.addView(add, LinearLayout.LayoutParams(-1, dp(54)).apply {
-            marginStart = dp(20)
-            marginEnd = dp(20)
-            topMargin = dp(9)
-            bottomMargin = dp(16)
-        })
+        pageSendButton?.background = shape(if (ready) emerald else ink, 12)
+    }
+
+    private fun handlePageMicrophone(note: Note) {
+        if (VoiceRecordingService.isRecording) {
+            val target = getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE)
+                .getString("target_note_id", voiceTargetNoteId)
+            if (target != note.id) {
+                Toast.makeText(this, "یک ضبط دیگر فعال است", Toast.LENGTH_LONG).show()
+                return
+            }
+            finishVoiceRecording()
+            awaitVoiceDraft(note.id, 0)
+            return
+        }
+        syncVoiceDraft()
+        if (pendingVoiceFilename != null) {
+            if (voiceTargetNoteId == note.id) showVoiceNoteNameDialog()
+            else Toast.makeText(this, "ابتدا صدای قبلی را ثبت کن", Toast.LENGTH_LONG).show()
+            return
+        }
+        voiceTargetNoteId = note.id
+        getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE).edit()
+            .putString("target_note_id", note.id).commit()
+        onMicrophoneClicked()
+        updatePageVoiceControls()
+        uiHandler.postDelayed({ updatePageVoiceControls() }, 650L)
+    }
+
+    private fun awaitVoiceDraft(noteId: String, tries: Int) {
+        uiHandler.postDelayed({
+            syncVoiceDraft()
+            updatePageVoiceControls()
+            if (pendingVoiceFilename != null && voiceTargetNoteId == noteId) {
+                showVoiceNoteNameDialog()
+            } else if (tries < 15) {
+                awaitVoiceDraft(noteId, tries + 1)
+            } else {
+                Toast.makeText(this, "فایل ضبط نشد؛ دوباره امتحان کن", Toast.LENGTH_LONG).show()
+            }
+        }, 180L)
     }
 
     private fun navigateBackFromNote() {
@@ -1264,6 +1442,9 @@ class MainActivity : Activity() {
         currentPageNoteId = null
         notePage?.let { screenRoot.removeView(it) }
         notePage = null
+        pageVoiceButton = null
+        pageVoiceStatus = null
+        pageSendButton = null
         if (::homePage.isInitialized) homePage.visibility = View.VISIBLE
     }
 
