@@ -1238,7 +1238,30 @@ class MainActivity : Activity() {
 
         val children = notes.filter { it.parentId == note.id }
         children.forEachIndexed { index, child -> addNoteCard(child, index + 1, list) }
-        if (children.isEmpty()) {
+
+        note.audioAttachments.forEach { attachment ->
+            val voiceCard = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
+                setPadding(dp(12), dp(11), dp(12), dp(11))
+                background = shape(Color.WHITE, 13, softBorder)
+            }
+            list.addView(voiceCard, LinearLayout.LayoutParams(-1, -2).apply {
+                bottomMargin = dp(9)
+            })
+            voiceCard.addView(label(attachment.title, 15f, ink, true).apply {
+                typeface = titleFont
+            })
+            voiceCard.addView(actionLabel("پخش  " + formatDuration(attachment.durationMs)) {
+                toggleVoicePlayback(Note("attached-" + attachment.filename,
+                    attachment.title, false, Color.WHITE,
+                    audioFilename = attachment.filename,
+                    audioDurationMs = attachment.durationMs))
+            })
+            voiceCard.addView(voiceActionBar(attachment.filename),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
+        }
+        if (children.isEmpty() && note.audioAttachments.isEmpty()) {
             val empty = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
