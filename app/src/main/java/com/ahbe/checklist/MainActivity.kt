@@ -1672,15 +1672,8 @@ class MainActivity : Activity() {
         mediaRow.addView(label("عکس +", 12f, indigo, true).apply {
             setPadding(dp(5), dp(8), dp(15), dp(8))
             setOnClickListener {
-                pickingImageForNoteId = note.id
-                getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
-                    .putString("image_target", note.id).apply()
                 detail.dismiss()
-                val choose = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "image/*"
-                }
-                startActivityForResult(choose, 2014)
+                pickImageForNote(note)
             }
         })
         mediaRow.addView(label("صوت +", 12f, indigo, true).apply {
@@ -1938,6 +1931,68 @@ class MainActivity : Activity() {
         if (scrollToBottom) scroller.post { scroller.fullScroll(View.FOCUS_DOWN) }
     }
 
+
+    private fun imageTitle(filename: String): String =
+        getSharedPreferences("image_display_titles", MODE_PRIVATE)
+            .getString(filename, null)?.takeIf { it.isNotBlank() }
+            ?: "عکس " + filename.take(6)
+
+    private fun renameImage(filename: String) {
+        val textField = EditText(this).apply {
+            setText(imageTitle(filename))
+            selectAll()
+            setSingleLine(true)
+            typeface = titleFont
+            setPadding(dp(18), dp(10), dp(18), dp(10))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("تغییر نام عکس")
+            .setView(textField)
+            .setNegativeButton("انصراف", null)
+            .setPositiveButton("ذخیره") { _, _ ->
+                val name = textField.text.toString().trim()
+                if (name.isNotEmpty()) {
+                    getSharedPreferences("image_display_titles", MODE_PRIVATE).edit()
+                        .putString(filename, name).apply()
+                    renderOpenNotePage()
+                }
+            }.show()
+    }
+
+    private fun pickImageForNote(note: Note) {
+        pickingImageForNoteId = note.id
+        getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
+            .putString("image_target", note.id).apply()
+        val chooser = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+        }
+        runCatching { startActivityForResult(chooser, 2014) }.onFailure {
+            Toast.makeText(this, "انتخاب تصویر در دسترس نیست", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun openImageInPhone(filename: String) {
+        val file = storedImageFile(filename)
+        if (file == null || !file.isFile) {
+            Toast.makeText(this, "عکس پیدا نشد", Toast.LENGTH_LONG).show()
+            return
+        }
+        val uri = NoteImageProvider.uri(this, filename)
+        val open = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, when (file.extension) {
+                "png" -> "image/png"
+                "webp" -> "image/webp"
+                else -> "image/jpeg"
+            })
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            clipData = android.content.ClipData.newRawUri(imageTitle(filename), uri)
+        }
+        runCatching { startActivity(open) }.onFailure {
+            Toast.makeText(this, "نمایشگر عکس در گوشی پیدا نشد", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun storedImageFile(filename: String): File? {
         if (!Regex("^[0-9a-fA-F-]{36}\\.(jpg|png|webp)$").matches(filename)) return null
         return File(File(filesDir, "note_images"), filename)
@@ -1971,7 +2026,7 @@ class MainActivity : Activity() {
         val note = notes.firstOrNull { it.id == targetId } ?: return
         val uri = if (resultCode == RESULT_OK) data?.data else null
         if (uri == null) {
-            showNoteDetail(note)
+            renderOpenNotePage()
             return
         }
         val extension = when (contentResolver.getType(uri)) {
@@ -2007,7 +2062,7 @@ class MainActivity : Activity() {
             file.delete()
             Toast.makeText(this, "تصویر ذخیره نشد یا حجم آن بیشتر از ۱۵ مگابایت است", Toast.LENGTH_LONG).show()
         }
-        showNoteDetail(note)
+        renderOpenNotePage()
     }
 
 
