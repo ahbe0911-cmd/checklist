@@ -68,10 +68,9 @@ class MainActivity : Activity() {
         var category: String = "کتابخانه",
         var parentId: String? = null,
         val imageFilenames: MutableList<String> = mutableListOf(),
-        val audioAttachments: MutableList<AudioAttachment> = mutableListOf()
+        val audioAttachments: MutableList<AudioAttachment> = mutableListOf(),
+        var dueAt: Long? = null
     )
-
-    private enum class Filter { ALL, ACTIVE, COMPLETED }
 
     private val surface = Color.rgb(244, 247, 246)
     private val ink = Color.rgb(30, 41, 59)
@@ -88,12 +87,11 @@ class MainActivity : Activity() {
         Color.rgb(245, 247, 249)
     )
     private val notes = mutableListOf<Note>()
-    private val categories = listOf("کتابخانه", "کافی‌نت", "دانشگاه")
+    private val categories = mutableListOf("کتابخانه", "کافی‌نت", "دانشگاه")
     private var selectedCategory = "کتابخانه"
     private val categoryButtons = mutableMapOf<String, TextView>()
     private var pickingImageForNoteId: String? = null
     private var voiceTargetNoteId: String? = null
-    private var filter = Filter.ALL
     private var search = ""
     private var pendingPermissionNoteId: String? = null
     private val titleFont by lazy { loadTypeface("fonts/far_vazir.ttf") }
@@ -119,7 +117,7 @@ class MainActivity : Activity() {
     private lateinit var emptyState: LinearLayout
     private lateinit var scroll: ScrollView
     private lateinit var input: EditText
-    private val filterButtons = mutableMapOf<Filter, TextView>()
+    private lateinit var categoryBar: LinearLayout
     private lateinit var microphoneButton: ImageButton
     private lateinit var cancelAudioButton: ImageButton
     private lateinit var sendButton: ImageButton
@@ -161,8 +159,10 @@ class MainActivity : Activity() {
             View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         ReminderEngine.createChannel(this)
+        loadCategories()
         selectedCategory = getSharedPreferences("checklist_native", MODE_PRIVATE)
-            .getString("active_category", "کتابخانه")?.takeIf { it in categories } ?: "کتابخانه"
+            .getString("active_category", "کتابخانه")?.takeIf { it in categories }
+            ?: categories.first()
         loadNotes()
         loadAppearanceSettings()
         buildScreen()
@@ -244,7 +244,7 @@ class MainActivity : Activity() {
         header.addView(headerTop, LinearLayout.LayoutParams(-1, dp(49)))
 
         val heading = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+            orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
         }
         headerTop.addView(heading, LinearLayout.LayoutParams(0, -1, 1f))
@@ -254,25 +254,8 @@ class MainActivity : Activity() {
         }
         heading.addView(headingLabel)
 
-        val divider = View(this).apply { setBackgroundColor(softBorder) }
-        heading.addView(divider, LinearLayout.LayoutParams(dp(1), dp(18)).apply {
-            marginStart = dp(10)
-            marginEnd = dp(10)
-        })
         dateLabel = label("", 13f, muted, true).apply { typeface = dateFont }
         heading.addView(dateLabel)
-
-        val settingsButton = ImageButton(this).apply {
-            setImageResource(R.drawable.ic_settings)
-            imageTintList = ColorStateList.valueOf(muted)
-            background = shape(Color.rgb(248, 250, 252), 10, softBorder)
-            setPadding(dp(8), dp(8), dp(8), dp(8))
-            contentDescription = "تنظیمات"
-            setOnClickListener { showAppearanceSettings() }
-        }
-        heading.addView(settingsButton, LinearLayout.LayoutParams(dp(34), dp(34)).apply {
-            marginStart = dp(7)
-        })
 
         val progressBlock = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -292,39 +275,41 @@ class MainActivity : Activity() {
             topMargin = dp(8)
         })
 
-        val categoryBar = LinearLayout(this).apply {
+        // The settings control stays in the far top corner, outside the title.
+        val settingsButton = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_settings)
+            imageTintList = ColorStateList.valueOf(muted)
+            background = shape(Color.rgb(248, 250, 252), 10, softBorder)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            contentDescription = "تنظیمات و مدیریت سربرگ‌ها"
+            setOnClickListener { showMainSettings() }
+        }
+        headerTop.addView(settingsButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+            marginStart = dp(10)
+        })
+
+        categoryBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_RTL
-            gravity = Gravity.CENTER
-            background = shape(Color.rgb(244, 246, 251), 13)
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), dp(4), dp(4), dp(4))
+            background = shape(Color.rgb(244, 246, 251), 13)
         }
-        header.addView(categoryBar, LinearLayout.LayoutParams(-1, dp(47)).apply {
+        val categoryScroll = android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            isFillViewport = true
+            addView(categoryBar, FrameLayout.LayoutParams(-1, dp(47)))
+        }
+        header.addView(categoryScroll, LinearLayout.LayoutParams(-1, dp(47)).apply {
             topMargin = dp(11)
         })
-        categories.forEach { category ->
-            val tab = label(category, 15f, ink, true).apply {
-                gravity = Gravity.CENTER
-                isClickable = true
-                isFocusable = true
-                setOnClickListener {
-                    selectedCategory = category
-                    getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
-                        .putString("active_category", category).apply()
-                    updateCategories()
-                    renderNotes()
-                }
-            }
-            categoryBar.addView(tab, LinearLayout.LayoutParams(0, -1, 1f))
-            categoryButtons[category] = tab
-        }
-        updateCategories()
+        renderCategoryTabs()
 
-        val searchAndFilters = LinearLayout(this).apply {
+        val searchRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        header.addView(searchAndFilters, LinearLayout.LayoutParams(-1, dp(44)).apply {
+        header.addView(searchRow, LinearLayout.LayoutParams(-1, dp(44)).apply {
             topMargin = dp(12)
         })
 
@@ -340,9 +325,7 @@ class MainActivity : Activity() {
             setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0)
         }
         searchField.typeface = textFont
-        searchAndFilters.addView(searchField, LinearLayout.LayoutParams(0, dp(41), 1f).apply {
-            marginEnd = dp(10)
-        })
+        searchRow.addView(searchField, LinearLayout.LayoutParams(-1, dp(41)))
         searchField.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -351,35 +334,6 @@ class MainActivity : Activity() {
             }
             override fun afterTextChanged(s: Editable?) {}
         })
-
-        val filters = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(3), dp(3), dp(3), dp(3))
-            background = shape(Color.rgb(241, 245, 249), 12)
-        }
-        searchAndFilters.addView(filters, LinearLayout.LayoutParams(-2, dp(41)))
-
-        listOf(
-            Filter.ALL to "همه",
-            Filter.ACTIVE to "جاری",
-            Filter.COMPLETED to "انجام"
-        ).forEach { (type, caption) ->
-            val tab = label(caption, 11f, muted, true).apply {
-                gravity = Gravity.CENTER
-                isClickable = true
-                isFocusable = true
-                contentDescription = "نمایش " + caption
-                setOnClickListener {
-                    filter = type
-                    updateFilters()
-                    renderNotes()
-                }
-            }
-            filters.addView(tab, LinearLayout.LayoutParams(dp(46), -1))
-            filterButtons[type] = tab
-        }
-        updateFilters()
 
         val main = FrameLayout(this)
         root.addView(main, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -533,6 +487,34 @@ class MainActivity : Activity() {
         refreshVoiceComposer()
     }
 
+    private fun renderCategoryTabs() {
+        if (!::categoryBar.isInitialized) return
+        categoryBar.removeAllViews()
+        categoryButtons.clear()
+        categories.forEach { category ->
+            val tab = label(category, 15f, ink, true).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(17), 0, dp(17), 0)
+                minWidth = dp(95)
+                maxLines = 1
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    selectedCategory = category
+                    persistSelectedCategory()
+                    updateCategories()
+                    renderNotes()
+                }
+            }
+            categoryBar.addView(tab, (
+                if (categories.size <= 3) LinearLayout.LayoutParams(0, -1, 1f)
+                else LinearLayout.LayoutParams(-2, -1)
+            ).apply { marginEnd = dp(4) })
+            categoryButtons[category] = tab
+        }
+        updateCategories()
+    }
+
     private fun updateCategories() {
         categoryButtons.forEach { (category, tab) ->
             val active = category == selectedCategory
@@ -540,6 +522,207 @@ class MainActivity : Activity() {
             tab.setTextColor(if (active) indigo else muted)
             tab.elevation = if (active) dp(2).toFloat() else 0f
         }
+    }
+
+    private fun persistSelectedCategory() {
+        getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
+            .putString("active_category", selectedCategory).apply()
+    }
+
+    private fun loadCategories() {
+        val saved = getSharedPreferences("checklist_native", MODE_PRIVATE)
+            .getString("categories_v2", null) ?: return
+        runCatching {
+            val json = JSONArray(saved)
+            val loaded = mutableListOf<String>()
+            for (i in 0 until json.length()) {
+                val value = json.optString(i).trim()
+                if (value.isNotEmpty() && value !in loaded) loaded.add(value)
+            }
+            if (loaded.isNotEmpty()) {
+                categories.clear()
+                categories.addAll(loaded)
+            }
+        }
+    }
+
+    private fun saveCategories() {
+        getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
+            .putString("categories_v2", JSONArray(categories).toString())
+            .putString("active_category", selectedCategory).apply()
+    }
+
+    private fun showMainSettings() {
+        AlertDialog.Builder(this)
+            .setTitle("تنظیمات")
+            .setItems(arrayOf("مدیریت سربرگ‌ها", "تنظیمات ظاهری و فونت")) { _, choice ->
+                if (choice == 0) showCategoryManager() else showAppearanceSettings()
+            }
+            .setNegativeButton("بستن", null)
+            .show()
+    }
+
+    private fun normalizedCategoryName(raw: String, previous: String? = null): String? {
+        val title = raw.trim()
+        when {
+            title.isEmpty() -> Toast.makeText(this, "نام سربرگ نمی‌تواند خالی باشد", Toast.LENGTH_SHORT).show()
+            title.length > 32 -> Toast.makeText(this, "نام سربرگ باید کوتاه‌تر از ۳۳ حرف باشد", Toast.LENGTH_SHORT).show()
+            categories.any { it == title && it != previous } ->
+                Toast.makeText(this, "این نام قبلاً وجود دارد", Toast.LENGTH_SHORT).show()
+            else -> return title
+        }
+        return null
+    }
+
+    private fun refreshCategoriesAfterEdit() {
+        renderCategoryTabs()
+        renderNotes()
+    }
+
+    private fun renameCategory(oldName: String) {
+        val field = EditText(this).apply {
+            setText(oldName)
+            selectAll()
+            setSingleLine(true)
+            typeface = textFont
+            setPadding(dp(20), dp(13), dp(20), dp(13))
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("ویرایش نام سربرگ")
+            .setView(field)
+            .setNegativeButton("انصراف", null)
+            .setPositiveButton("ذخیره", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val title = normalizedCategoryName(field.text.toString(), oldName)
+                    ?: return@setOnClickListener
+                if (oldName != title) {
+                    val position = categories.indexOf(oldName)
+                    if (position >= 0) categories[position] = title
+                    notes.filter { it.category == oldName }.forEach { it.category = title }
+                    if (selectedCategory == oldName) selectedCategory = title
+                    saveNotes()
+                    saveCategories()
+                    refreshCategoriesAfterEdit()
+                }
+                dialog.dismiss()
+                showCategoryManager()
+            }
+        }
+        dialog.show()
+    }
+
+    private fun deleteCategory(name: String) {
+        if (categories.size <= 1) {
+            Toast.makeText(this, "حداقل یک سربرگ باید باقی بماند", Toast.LENGTH_LONG).show()
+            return
+        }
+        val count = notes.count { it.category == name }
+        if (count == 0) {
+            AlertDialog.Builder(this)
+                .setTitle("حذف سربرگ «" + name + "»")
+                .setMessage("این سربرگ خالی است. حذف شود؟")
+                .setNegativeButton("انصراف", null)
+                .setPositiveButton("حذف") { _, _ ->
+                    categories.remove(name)
+                    if (selectedCategory == name) selectedCategory = categories.first()
+                    saveCategories()
+                    refreshCategoriesAfterEdit()
+                    showCategoryManager()
+                }.show()
+            return
+        }
+        val destinations = categories.filter { it != name }
+        AlertDialog.Builder(this)
+            .setTitle("انتقال یادداشت‌ها پیش از حذف")
+            .setMessage("در این سربرگ " + fa(count) +
+                " یادداشت و زیرمجموعه وجود دارد. برای جلوگیری از حذف اطلاعات، مقصد آن‌ها را انتخاب کن.")
+            .setNegativeButton("انصراف", null)
+            .setItems(destinations.toTypedArray()) { _, which ->
+                val destination = destinations[which]
+                AlertDialog.Builder(this)
+                    .setTitle("حذف سربرگ")
+                    .setMessage("همه یادداشت‌های «" + name + "» به «" +
+                        destination + "» منتقل شوند و فقط سربرگ قبلی حذف شود؟")
+                    .setNegativeButton("انصراف", null)
+                    .setPositiveButton("انتقال و حذف") { _, _ ->
+                        notes.filter { it.category == name }.forEach { it.category = destination }
+                        categories.remove(name)
+                        if (selectedCategory == name) selectedCategory = destination
+                        saveNotes()
+                        saveCategories()
+                        refreshCategoriesAfterEdit()
+                        showCategoryManager()
+                    }.show()
+            }.show()
+    }
+
+    private fun showCategoryManager() {
+        val items = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(14), dp(12), dp(14), dp(14))
+        }
+        val dialog = AlertDialog.Builder(this).setTitle("مدیریت سربرگ‌ها")
+            .setView(ScrollView(this).apply { addView(items) })
+            .setPositiveButton("بستن", null).create()
+        categories.toList().forEach { category ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(4), dp(5), dp(4), dp(5))
+            }
+            items.addView(row, LinearLayout.LayoutParams(-1, -2))
+            row.addView(label(category, 15f, ink, true),
+                LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(label("ویرایش", 12f, indigo, true).apply {
+                setPadding(dp(9), dp(12), dp(9), dp(12))
+                setOnClickListener {
+                    dialog.dismiss()
+                    renameCategory(category)
+                }
+            })
+            row.addView(label("حذف", 12f, Color.rgb(180, 60, 65), true).apply {
+                setPadding(dp(9), dp(12), dp(9), dp(12))
+                setOnClickListener {
+                    dialog.dismiss()
+                    deleteCategory(category)
+                }
+            })
+            items.addView(View(this).apply { setBackgroundColor(softBorder) },
+                LinearLayout.LayoutParams(-1, dp(1)))
+        }
+        val addRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        items.addView(addRow, LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = dp(15)
+        })
+        val nameInput = EditText(this).apply {
+            hint = "نام سربرگ جدید"
+            textSize = 15f
+            typeface = textFont
+            setSingleLine(true)
+            background = shape(Color.rgb(248, 250, 252), 10, softBorder)
+            setPadding(dp(12), 0, dp(12), 0)
+        }
+        addRow.addView(nameInput, LinearLayout.LayoutParams(0, dp(48), 1f))
+        addRow.addView(label("افزودن", 13f, indigo, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(12), 0, dp(12), 0)
+            setOnClickListener {
+                val name = normalizedCategoryName(nameInput.text.toString())
+                    ?: return@setOnClickListener
+                categories.add(name)
+                selectedCategory = name
+                saveCategories()
+                refreshCategoriesAfterEdit()
+                dialog.dismiss()
+                showCategoryManager()
+            }
+        }, LinearLayout.LayoutParams(-2, dp(48)))
+        dialog.show()
     }
 
     private fun requestInitialPermissions() {
@@ -553,14 +736,6 @@ class MainActivity : Activity() {
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             missing.add(Manifest.permission.POST_NOTIFICATIONS)
         if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), 915)
-    }
-
-    private fun updateFilters() {
-        filterButtons.forEach { (key, tab) ->
-            val selected = key == filter
-            tab.setTextColor(if (selected) Color.WHITE else muted)
-            tab.background = if (selected) shape(ink, 9) else null
-        }
     }
 
     private fun updateDate() {
@@ -588,12 +763,7 @@ class MainActivity : Activity() {
         val visible = notes.filter { note ->
             val searchMatch = note.text.contains(search, ignoreCase = true) ||
                 notes.any { it.parentId == note.id && it.text.contains(search, ignoreCase = true) }
-            val filterMatch = when (filter) {
-                Filter.ALL -> true
-                Filter.ACTIVE -> !note.completed
-                Filter.COMPLETED -> note.completed
-            }
-            note.category == selectedCategory && note.parentId == null && searchMatch && filterMatch
+            note.category == selectedCategory && note.parentId == null && searchMatch
         }
         emptyState.visibility = if (visible.isEmpty()) View.VISIBLE else View.GONE
         visible.forEachIndexed { index, note -> addNoteCard(note, index + 1) }
@@ -653,6 +823,11 @@ class MainActivity : Activity() {
             if (note.completed) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
         }
         noteTextColumn.addView(noteText, LinearLayout.LayoutParams(-1, -2))
+        note.dueAt?.let { due ->
+            noteTextColumn.addView(label("تاریخ اجرا: " + formatDueDate(due), 12f,
+                Color.rgb(195, 45, 52), true).apply { typeface = textFont },
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) })
+        }
         val countChildren = notes.count { it.parentId == note.id }
         if (countChildren > 0 || note.imageFilenames.isNotEmpty() || note.audioAttachments.isNotEmpty()) {
             noteTextColumn.addView(
@@ -773,6 +948,79 @@ class MainActivity : Activity() {
         notes.removeAll { it.id == note.id }
     }
 
+
+    private fun formatDueDate(time: Long): String =
+        SimpleDateFormat("yyyy/MM/dd", ULocale("fa_IR@calendar=persian")).format(Date(time))
+
+    /** Execution date is shown in red and does not create an alarm. */
+    private fun showPersianDatePicker(initialAt: Long?, onPick: (Long?) -> Unit) {
+        val months = arrayOf("فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
+            "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند")
+        val now = PersianIcuCalendar.getInstance(ULocale("fa_IR@calendar=persian"))
+        val selected = PersianIcuCalendar.getInstance(ULocale("fa_IR@calendar=persian"))
+        if (initialAt != null) selected.timeInMillis = initialAt
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.CENTER
+            setPadding(dp(9), dp(12), dp(9), dp(4))
+        }
+        val currentYear = now.get(PersianIcuCalendar.YEAR)
+        val year = NumberPicker(this).apply {
+            minValue = currentYear - 5
+            maxValue = currentYear + 15
+            value = selected.get(PersianIcuCalendar.YEAR).coerceIn(minValue, maxValue)
+            wrapSelectorWheel = false
+            descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
+        }
+        val month = NumberPicker(this).apply {
+            minValue = 1
+            maxValue = 12
+            displayedValues = months
+            value = selected.get(PersianIcuCalendar.MONTH) + 1
+            wrapSelectorWheel = false
+            descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
+        }
+        val day = NumberPicker(this).apply {
+            minValue = 1
+            maxValue = 31
+            value = selected.get(PersianIcuCalendar.DAY_OF_MONTH)
+            wrapSelectorWheel = false
+            descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
+        }
+        fun limitDay() {
+            val temp = PersianIcuCalendar.getInstance(ULocale("fa_IR@calendar=persian"))
+            temp.clear()
+            temp.set(year.value, month.value - 1, 1, 12, 0, 0)
+            val max = temp.getActualMaximum(PersianIcuCalendar.DAY_OF_MONTH)
+            day.maxValue = max
+            if (day.value > max) day.value = max
+        }
+        year.setOnValueChangedListener { _, _, _ -> limitDay() }
+        month.setOnValueChangedListener { _, _, _ -> limitDay() }
+        limitDay()
+        row.addView(day, LinearLayout.LayoutParams(0, dp(152), 1f))
+        row.addView(month, LinearLayout.LayoutParams(0, dp(152), 1.5f))
+        row.addView(year, LinearLayout.LayoutParams(0, dp(152), 1.2f))
+        AlertDialog.Builder(this)
+            .setTitle("تاریخ اجرای کار (شمسی)")
+            .setView(row)
+            .setNegativeButton("انصراف", null)
+            .setNeutralButton("حذف تاریخ") { _, _ -> onPick(null) }
+            .setPositiveButton("ثبت تاریخ") { _, _ ->
+                val date = PersianIcuCalendar.getInstance(ULocale("fa_IR@calendar=persian"))
+                date.isLenient = false
+                date.clear()
+                date.set(year.value, month.value - 1, day.value, 12, 0, 0)
+                val timestamp = runCatching { date.timeInMillis }.getOrNull()
+                if (timestamp == null) {
+                    Toast.makeText(this, "تاریخ نامعتبر است", Toast.LENGTH_LONG).show()
+                } else {
+                    onPick(timestamp)
+                }
+            }.show()
+    }
+
     private fun actionLabel(text: String, callback: () -> Unit): TextView =
         label(text, 14f, indigo, true).apply {
             gravity = Gravity.CENTER
@@ -784,7 +1032,7 @@ class MainActivity : Activity() {
         }
 
     /** A note is a folder-like node: it can contain children and independent attachments. */
-    private fun showNoteDetail(note: Note) {
+    private fun showNoteDetail(note: Note, scrollToBottom: Boolean = false) {
         if (notes.none { it.id == note.id } || isFinishing) return
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -797,41 +1045,72 @@ class MainActivity : Activity() {
             .setView(scroller)
             .setPositiveButton("بستن", null)
             .create()
-        content.addView(label("دسته: " + note.category, 12f, muted),
-            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
 
-        val firstRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        content.addView(firstRow, LinearLayout.LayoutParams(-1, -2))
-        firstRow.addView(actionLabel("افزودن زیرشاخه") {
-            detail.dismiss()
-            showAddChildDialog(note)
-        }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(6) })
-        firstRow.addView(actionLabel("افزودن عکس") {
-            pickingImageForNoteId = note.id
-            getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
-                .putString("image_target", note.id).apply()
-            detail.dismiss()
-            val choose = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE)
-                type = "image/*"
+        if (note.parentId != null) {
+            content.addView(label("‹ بازگشت به یادداشت قبلی", 13f, indigo).apply {
+                setPadding(0, 0, 0, dp(11))
+                setOnClickListener {
+                    detail.dismiss()
+                    notes.firstOrNull { it.id == note.parentId }?.let { showNoteDetail(it) }
+                }
+            }, LinearLayout.LayoutParams(-1, -2))
+        }
+        content.addView(label(
+            note.dueAt?.let { "تاریخ اجرا: " + formatDueDate(it) }
+                ?: "انتخاب تاریخ اجرای شمسی",
+            13f, if (note.dueAt == null) muted else Color.rgb(195, 45, 52), true
+        ).apply {
+            setPadding(0, dp(5), 0, dp(10))
+            setOnClickListener {
+                showPersianDatePicker(note.dueAt) { picked ->
+                    note.dueAt = picked
+                    saveNotes()
+                    renderNotes()
+                    detail.dismiss()
+                    showNoteDetail(note)
+                }
             }
-            startActivityForResult(choose, 2014)
-        }, LinearLayout.LayoutParams(0, -2, 1f))
+        }, LinearLayout.LayoutParams(-1, -2))
 
-        val secondRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        content.addView(secondRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
-        secondRow.addView(actionLabel("ضبط صوت در این یادداشت") {
-            voiceTargetNoteId = note.id
-            getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE).edit()
-                .putString("target_note_id", note.id).apply()
-            detail.dismiss()
-            onMicrophoneClicked()
-        }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(6) })
-        secondRow.addView(actionLabel(if (note.completed) "بازگرداندن به جاری" else "علامت انجام") {
-            toggleCompleted(note)
-            detail.dismiss()
-            showNoteDetail(note)
-        }, LinearLayout.LayoutParams(0, -2, 1f))
+        val mediaRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        content.addView(mediaRow, LinearLayout.LayoutParams(-1, -2))
+        mediaRow.addView(label("عکس +", 12f, indigo, true).apply {
+            setPadding(dp(5), dp(8), dp(15), dp(8))
+            setOnClickListener {
+                pickingImageForNoteId = note.id
+                getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
+                    .putString("image_target", note.id).apply()
+                detail.dismiss()
+                val choose = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "image/*"
+                }
+                startActivityForResult(choose, 2014)
+            }
+        })
+        mediaRow.addView(label("صوت +", 12f, indigo, true).apply {
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setOnClickListener {
+                voiceTargetNoteId = note.id
+                getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE).edit()
+                    .putString("target_note_id", note.id).apply()
+                detail.dismiss()
+                onMicrophoneClicked()
+            }
+        })
+        mediaRow.addView(View(this), LinearLayout.LayoutParams(0, dp(1), 1f))
+        mediaRow.addView(label(if (note.completed) "✓ انجام‌شده" else "○ انجام",
+            12f, if (note.completed) emerald else muted).apply {
+            setPadding(dp(10), dp(8), dp(5), dp(8))
+            setOnClickListener {
+                toggleCompleted(note)
+                detail.dismiss()
+                showNoteDetail(note)
+            }
+        })
 
         if (note.audioFilename != null) {
             content.addView(label("صدای اصلی یادداشت", 15f, ink, true),
@@ -915,50 +1194,156 @@ class MainActivity : Activity() {
             }
         }
 
+
         val children = notes.filter { it.parentId == note.id }
-        content.addView(label("زیرشاخه‌ها (" + fa(children.size) + ")", 16f, ink, true),
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(20) })
-        if (children.isEmpty()) {
-            content.addView(label("هنوز زیرشاخه‌ای ثبت نشده است.", 13f, muted))
-        } else {
-            children.forEach { child ->
-                content.addView(actionLabel("◀  " + child.text) {
+        if (children.isNotEmpty()) {
+            content.addView(View(this).apply { setBackgroundColor(softBorder) },
+                LinearLayout.LayoutParams(-1, dp(1)).apply { topMargin = dp(12) })
+        }
+        children.forEach { child ->
+            val item = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(9), dp(5), dp(9), dp(5))
+                background = shape(Color.rgb(249, 250, 252), 10)
+            }
+            content.addView(item, LinearLayout.LayoutParams(-1, -2).apply {
+                topMargin = dp(7)
+            })
+            item.addView(label(if (child.completed) "☑" else "□", 22f,
+                if (child.completed) emerald else muted).apply {
+                setPadding(dp(2), 0, dp(9), 0)
+                contentDescription = "علامت انجام"
+                setOnClickListener {
+                    toggleCompleted(child)
+                    detail.dismiss()
+                    showNoteDetail(note)
+                }
+            })
+            val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            item.addView(body, LinearLayout.LayoutParams(0, -2, 1f))
+            body.addView(label(child.text, 15f, if (child.completed) muted else ink).apply {
+                typeface = textFont
+                if (child.completed) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
+                setPadding(0, dp(7), 0, dp(7))
+                setOnClickListener {
                     detail.dismiss()
                     showNoteDetail(child)
-                }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+                }
+            }, LinearLayout.LayoutParams(-1, -2))
+            child.dueAt?.let { due ->
+                body.addView(label("تاریخ اجرا: " + formatDueDate(due), 12f,
+                    Color.rgb(195, 45, 52), true).apply {
+                    typeface = textFont
+                    setPadding(0, 0, 0, dp(6))
+                    setOnClickListener {
+                        showPersianDatePicker(child.dueAt) { selected ->
+                            child.dueAt = selected
+                            saveNotes()
+                            detail.dismiss()
+                            showNoteDetail(note)
+                        }
+                    }
+                })
+            }
+            item.addView(label("تاریخ", 11f, indigo).apply {
+                setPadding(dp(7), dp(10), dp(7), dp(10))
+                setOnClickListener {
+                    showPersianDatePicker(child.dueAt) { selected ->
+                        child.dueAt = selected
+                        saveNotes()
+                        detail.dismiss()
+                        showNoteDetail(note)
+                    }
+                }
+            })
+            item.addView(label("×", 20f, muted).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(9), dp(8), dp(3), dp(8))
+                contentDescription = "حذف " + child.text
+                setOnClickListener {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("حذف این مورد")
+                        .setMessage("«" + child.text + "» و تمام زیرمجموعه‌های آن حذف شوند؟")
+                        .setNegativeButton("انصراف", null)
+                        .setPositiveButton("حذف") { _, _ ->
+                            removeNoteTree(child)
+                            saveNotes()
+                            renderNotes()
+                            detail.dismiss()
+                            showNoteDetail(note)
+                        }.show()
+                }
+            })
+        }
+
+        // One familiar text field plus a send button. No separate sub-branch dialog.
+        var draftDueAt: Long? = null
+        val composer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = shape(Color.rgb(248, 250, 252), 14, softBorder)
+            setPadding(dp(6), dp(5), dp(6), dp(5))
+        }
+        content.addView(composer, LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = dp(14)
+        })
+        val childInput = EditText(this).apply {
+            hint = "یک مورد جدید بنویس..."
+            typeface = textFont
+            textSize = 15f
+            setSingleLine(true)
+            setTextColor(ink)
+            setHintTextColor(muted)
+            background = null
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(9), 0, dp(9), 0)
+            imeOptions = EditorInfo.IME_ACTION_DONE
+        }
+        composer.addView(childInput, LinearLayout.LayoutParams(0, dp(43), 1f))
+        val sendChild = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_send_message)
+            imageTintList = ColorStateList.valueOf(Color.WHITE)
+            background = shape(ink, 12)
+            setPadding(dp(11), dp(11), dp(11), dp(11))
+            contentDescription = "ثبت مورد در این یادداشت"
+        }
+        composer.addView(sendChild, LinearLayout.LayoutParams(dp(43), dp(43)))
+        val draftDate = label("تاریخ اجرا (اختیاری)", 12f, muted).apply {
+            setPadding(dp(6), dp(10), dp(6), dp(5))
+            setOnClickListener {
+                showPersianDatePicker(draftDueAt) { selected ->
+                    draftDueAt = selected
+                    text = selected?.let { "تاریخ اجرا: " + formatDueDate(it) }
+                        ?: "تاریخ اجرا (اختیاری)"
+                    setTextColor(if (selected == null) muted else Color.rgb(195, 45, 52))
+                }
             }
         }
-        detail.show()
-    }
-
-    private fun showAddChildDialog(parent: Note) {
-        val field = EditText(this).apply {
-            hint = "عنوان زیرشاخه..."
-            typeface = textFont
-            setSingleLine(true)
-            setPadding(dp(14), dp(8), dp(14), dp(8))
-        }
-        val dialog = AlertDialog.Builder(this).setTitle("زیرشاخه جدید")
-            .setView(field)
-            .setNegativeButton("انصراف") { _, _ -> showNoteDetail(parent) }
-            .setPositiveButton("ثبت", null).create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val title = field.text.toString().trim()
-                if (title.isEmpty()) {
-                    field.error = "عنوان را وارد کنید"
-                    return@setOnClickListener
-                }
-                notes.add(Note(UUID.randomUUID().toString(), title, false,
+        content.addView(draftDate, LinearLayout.LayoutParams(-1, -2))
+        val submitChild = {
+            val value = childInput.text.toString().trim()
+            if (value.isEmpty()) {
+                childInput.error = "متن را بنویس"
+            } else {
+                notes.add(Note(UUID.randomUUID().toString(), value, false,
                     palette[Random.nextInt(palette.size)],
-                    category = parent.category, parentId = parent.id))
+                    category = note.category, parentId = note.id, dueAt = draftDueAt))
                 saveNotes()
                 renderNotes()
-                dialog.dismiss()
-                showNoteDetail(parent)
+                detail.dismiss()
+                showNoteDetail(note, true)
             }
         }
-        dialog.show()
+        sendChild.setOnClickListener { submitChild() }
+        childInput.setOnEditorActionListener { _, action, _ ->
+            if (action == EditorInfo.IME_ACTION_DONE) {
+                submitChild()
+                true
+            } else false
+        }
+        detail.show()
+        if (scrollToBottom) scroller.post { scroller.fullScroll(View.FOCUS_DOWN) }
     }
 
     private fun storedImageFile(filename: String): File? {
@@ -1051,10 +1436,6 @@ class MainActivity : Activity() {
         notes.add(Note(UUID.randomUUID().toString(), text, false, palette[Random.nextInt(palette.size)], category = selectedCategory))
         saveNotes()
         input.text.clear()
-        if (filter != Filter.ALL) {
-            filter = Filter.ALL
-            updateFilters()
-        }
         renderNotes()
         scroll.post { scroll.smoothScrollTo(0, noteList.bottom) }
     }
@@ -1513,10 +1894,6 @@ class MainActivity : Activity() {
             .remove("draft_filename").remove("draft_duration")
             .remove("target_note_id").apply()
         refreshVoiceComposer()
-        if (filter != Filter.ALL) {
-            filter = Filter.ALL
-            updateFilters()
-        }
         renderNotes()
         if (target != null) showNoteDetail(target)
         else scroll.post { scroll.smoothScrollTo(0, noteList.bottom) }
@@ -1713,8 +2090,7 @@ class MainActivity : Activity() {
                     obj.optLong("calendarEventId", 0L).takeIf { it > 0L },
                     obj.optString("audioFilename", "").takeIf { it.isNotEmpty() },
                     obj.optLong("audioDurationMs", 0L).coerceAtLeast(0L),
-                    category = obj.optString("category", "کتابخانه").takeIf { it in categories }
-                        ?: "کتابخانه",
+                    category = obj.optString("category", "کتابخانه").ifBlank { "کتابخانه" },
                     parentId = obj.optString("parentId", "").takeIf { it.isNotEmpty() },
                     imageFilenames = mutableListOf<String>().apply {
                         val images = obj.optJSONArray("images") ?: JSONArray()
@@ -1733,10 +2109,20 @@ class MainActivity : Activity() {
                                     item.optLong("durationMs", 0L))
                             )
                         }
-                    }
+                    },
+                    dueAt = obj.optLong("dueAt", 0L).takeIf { it > 0L }
                 ))
             }
         }
+        // Preserve any custom category already stored in note data.
+        var categoriesChanged = false
+        notes.forEach { note ->
+            if (note.category !in categories) {
+                categories.add(note.category)
+                categoriesChanged = true
+            }
+        }
+        if (categoriesChanged) saveCategories()
     }
 
     private fun saveNotes() {
@@ -1753,6 +2139,7 @@ class MainActivity : Activity() {
                 put("audioDurationMs", it.audioDurationMs)
                 put("category", it.category)
                 put("parentId", it.parentId ?: "")
+                put("dueAt", it.dueAt ?: 0L)
                 put("images", JSONArray().apply { it.imageFilenames.forEach { name -> put(name) } })
                 put("audioAttachments", JSONArray().apply {
                     it.audioAttachments.forEach { item -> put(JSONObject().apply {
