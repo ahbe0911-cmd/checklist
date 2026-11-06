@@ -54,6 +54,8 @@ import kotlin.random.Random
  * No HTML, JavaScript, WebView, network permission, or third-party runtime.
  */
 class MainActivity : Activity() {
+    private data class AudioAttachment(val filename: String, val title: String, val durationMs: Long)
+
     private data class Note(
         val id: String,
         val text: String,
@@ -62,7 +64,11 @@ class MainActivity : Activity() {
         var reminderAt: Long? = null,
         var calendarEventId: Long? = null,
         val audioFilename: String? = null,
-        val audioDurationMs: Long = 0L
+        val audioDurationMs: Long = 0L,
+        var category: String = "کتابخانه",
+        var parentId: String? = null,
+        val imageFilenames: MutableList<String> = mutableListOf(),
+        val audioAttachments: MutableList<AudioAttachment> = mutableListOf()
     )
 
     private enum class Filter { ALL, ACTIVE, COMPLETED }
@@ -82,6 +88,11 @@ class MainActivity : Activity() {
         Color.rgb(245, 247, 249)
     )
     private val notes = mutableListOf<Note>()
+    private val categories = listOf("کتابخانه", "کافی‌نت", "دانشگاه")
+    private var selectedCategory = "کتابخانه"
+    private val categoryButtons = mutableMapOf<String, TextView>()
+    private var pickingImageForNoteId: String? = null
+    private var voiceTargetNoteId: String? = null
     private var filter = Filter.ALL
     private var search = ""
     private var pendingPermissionNoteId: String? = null
@@ -130,9 +141,14 @@ class MainActivity : Activity() {
     private var playingNoteId: String? = null
     private val voiceTicker = object : Runnable {
         override fun run() {
-            if (recorder == null) return
-            voiceTimer.text = formatDuration(SystemClock.elapsedRealtime() - recordingStartedAt)
-            uiHandler.postDelayed(this, 400L)
+            if (VoiceRecordingService.isRecording) {
+                voiceTimer.text = formatDuration(
+                    SystemClock.elapsedRealtime() - VoiceRecordingService.recordingStartedAt)
+                uiHandler.postDelayed(this, 400L)
+            } else {
+                syncVoiceDraft()
+                refreshVoiceComposer()
+            }
         }
     }
 
@@ -145,11 +161,14 @@ class MainActivity : Activity() {
             View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         ReminderEngine.createChannel(this)
+        selectedCategory = getSharedPreferences("checklist_native", MODE_PRIVATE)
+            .getString("active_category", "کتابخانه")?.takeIf { it in categories } ?: "کتابخانه"
         loadNotes()
         loadAppearanceSettings()
         buildScreen()
         updateDate()
         renderNotes()
+        requestInitialPermissions()
     }
 
     override fun onResume() {
@@ -157,24 +176,23 @@ class MainActivity : Activity() {
         if (::dateLabel.isInitialized) {
             updateDate()
             ReminderEngine.restore(this)
+            syncVoiceDraft()
+            refreshVoiceComposer()
+            if (VoiceRecordingService.isRecording) {
+                uiHandler.removeCallbacks(voiceTicker)
+                uiHandler.post(voiceTicker)
+            }
         }
     }
 
     override fun onStop() {
-        if (recorder != null) finishVoiceRecording()
+        // Mic capture belongs to the foreground service; never stop on screen lock.
         stopPlayback()
         super.onStop()
     }
 
     override fun onDestroy() {
         uiHandler.removeCallbacks(voiceTicker)
-        if (recorder != null) {
-            runCatching { recorder?.stop() }
-            runCatching { recorder?.release() }
-            recorder = null
-            recordingFilename?.let { storedAudioFile(it)?.delete() }
-        }
-        pendingVoiceFilename?.let { storedAudioFile(it)?.delete() }
         stopPlayback()
         super.onDestroy()
     }
@@ -273,6 +291,34 @@ class MainActivity : Activity() {
         progressBlock.addView(progressBar, LinearLayout.LayoutParams(-1, dp(5)).apply {
             topMargin = dp(8)
         })
+
+        val categoryBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.CENTER
+            background = shape(Color.rgb(244, 246, 251), 13)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+        header.addView(categoryBar, LinearLayout.LayoutParams(-1, dp(47)).apply {
+            topMargin = dp(11)
+        })
+        categories.forEach { category ->
+            val tab = label(category, 15f, ink, true).apply {
+                gravity = Gravity.CENTER
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    selectedCategory = category
+                    getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
+                        .putString("active_category", category).apply()
+                    updateCategories()
+                    renderNotes()
+                }
+            }
+            categoryBar.addView(tab, LinearLayout.LayoutParams(0, -1, 1f))
+            categoryButtons[category] = tab
+        }
+        updateCategories()
 
         val searchAndFilters = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -487,6 +533,28 @@ class MainActivity : Activity() {
         refreshVoiceComposer()
     }
 
+    private fun updateCategories() {
+        categoryButtons.forEach { (category, tab) ->
+            val active = category == selectedCategory
+            tab.background = if (active) shape(Color.WHITE, 10, softBorder) else null
+            tab.setTextColor(if (active) indigo else muted)
+            tab.elevation = if (active) dp(2).toFloat() else 0f
+        }
+    }
+
+    private fun requestInitialPermissions() {
+        val prefs = getSharedPreferences("checklist_native", MODE_PRIVATE)
+        if (prefs.getBoolean("initial_permissions_requested", false)) return
+        prefs.edit().putBoolean("initial_permissions_requested", true).apply()
+        val missing = mutableListOf<String>()
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
+            missing.add(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            missing.add(Manifest.permission.POST_NOTIFICATIONS)
+        if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), 915)
+    }
+
     private fun updateFilters() {
         filterButtons.forEach { (key, tab) ->
             val selected = key == filter
@@ -505,11 +573,12 @@ class MainActivity : Activity() {
     }.joinToString("")
 
     private fun updateProgress() {
-        val finished = notes.count { it.completed }
-        progressText.text = fa(finished) + " از " + fa(notes.size) + " انجام شده"
-        progressBar.progress = if (notes.isEmpty()) 0 else (finished * 100) / notes.size
+        val current = notes.filter { it.category == selectedCategory }
+        val finished = current.count { it.completed }
+        progressText.text = fa(finished) + " از " + fa(current.size) + " انجام شده"
+        progressBar.progress = if (current.isEmpty()) 0 else (finished * 100) / current.size
         progressBar.progressTintList = ColorStateList.valueOf(
-            if (finished == notes.size && notes.isNotEmpty()) emerald else indigo
+            if (finished == current.size && current.isNotEmpty()) emerald else indigo
         )
     }
 
@@ -517,13 +586,14 @@ class MainActivity : Activity() {
         if (!::noteList.isInitialized) return
         noteList.removeAllViews()
         val visible = notes.filter { note ->
-            val searchMatch = note.text.contains(search, ignoreCase = true)
+            val searchMatch = note.text.contains(search, ignoreCase = true) ||
+                notes.any { it.parentId == note.id && it.text.contains(search, ignoreCase = true) }
             val filterMatch = when (filter) {
                 Filter.ALL -> true
                 Filter.ACTIVE -> !note.completed
                 Filter.COMPLETED -> note.completed
             }
-            searchMatch && filterMatch
+            note.category == selectedCategory && note.parentId == null && searchMatch && filterMatch
         }
         emptyState.visibility = if (visible.isEmpty()) View.VISIBLE else View.GONE
         visible.forEachIndexed { index, note -> addNoteCard(note, index + 1) }
@@ -549,18 +619,8 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             isClickable = true
             isFocusable = true
-            contentDescription = (if (note.completed) "لغو انجام " else "انجام ") + note.text
-            setOnClickListener {
-                note.completed = !note.completed
-                if (note.completed && note.reminderAt != null) {
-                    ReminderEngine.cancel(this@MainActivity, note.id)
-                    PhoneCalendarStore.deleteEvent(this@MainActivity, note.calendarEventId)
-                    note.calendarEventId = null
-                    note.reminderAt = null
-                }
-                saveNotes()
-                renderNotes()
-            }
+            contentDescription = "بازکردن یادداشت " + note.text
+            setOnClickListener { showNoteDetail(note) }
         }
         card.addView(tapArea, LinearLayout.LayoutParams(0, -2, 1f))
 
@@ -570,6 +630,9 @@ class MainActivity : Activity() {
         val checkBox = FrameLayout(this).apply {
             background = shape(if (note.completed) emerald else Color.WHITE, 6,
                 if (note.completed) emerald else Color.rgb(203, 213, 225))
+            isClickable = true
+            contentDescription = if (note.completed) "برگرداندن به جاری" else "علامت انجام"
+            setOnClickListener { toggleCompleted(note) }
         }
         tapArea.addView(checkBox, LinearLayout.LayoutParams(dp(22), dp(22)).apply {
             marginEnd = dp(11)
@@ -590,6 +653,15 @@ class MainActivity : Activity() {
             if (note.completed) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
         }
         noteTextColumn.addView(noteText, LinearLayout.LayoutParams(-1, -2))
+        val countChildren = notes.count { it.parentId == note.id }
+        if (countChildren > 0 || note.imageFilenames.isNotEmpty() || note.audioAttachments.isNotEmpty()) {
+            noteTextColumn.addView(
+                label("زیرشاخه: " + fa(countChildren) + "  |  عکس: " +
+                    fa(note.imageFilenames.size) + "  |  صوت: " +
+                    fa(note.audioAttachments.size), 11f, indigo),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) }
+            )
+        }
         if (note.audioFilename != null) {
             val audioBadge = label("یادداشت صوتی", 10f, indigo, true).apply {
                 background = shape(Color.rgb(237, 240, 255), 8)
@@ -626,6 +698,10 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(7) })
             noteTextColumn.addView(playback,
                 LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(5) })
+            noteTextColumn.addView(label("اشتراک‌گذاری صوت", 11f, indigo, true).apply {
+                setPadding(dp(9), dp(7), dp(9), dp(7))
+                setOnClickListener { shareAudio(note.audioFilename) }
+            }, LinearLayout.LayoutParams(-2, -2))
         }
         val reminderTime = note.reminderAt
         if (reminderTime != null && reminderTime > System.currentTimeMillis()) {
@@ -663,9 +739,7 @@ class MainActivity : Activity() {
                     .withEndAction {
                         ReminderEngine.cancel(this@MainActivity, note.id)
                         PhoneCalendarStore.deleteEvent(this@MainActivity, note.calendarEventId)
-                        if (playingNoteId == note.id) stopPlayback()
-                        note.audioFilename?.let { storedAudioFile(it)?.delete() }
-                        notes.removeAll { it.id == note.id }
+                        removeNoteTree(note)
                         saveNotes()
                         renderNotes()
                     }.start()
@@ -676,15 +750,305 @@ class MainActivity : Activity() {
         })
     }
 
+    private fun toggleCompleted(note: Note) {
+        note.completed = !note.completed
+        if (note.completed && note.reminderAt != null) {
+            ReminderEngine.cancel(this, note.id)
+            PhoneCalendarStore.deleteEvent(this, note.calendarEventId)
+            note.calendarEventId = null
+            note.reminderAt = null
+        }
+        saveNotes()
+        renderNotes()
+    }
+
+    private fun removeNoteTree(note: Note) {
+        notes.filter { it.parentId == note.id }.toList().forEach { removeNoteTree(it) }
+        ReminderEngine.cancel(this, note.id)
+        PhoneCalendarStore.deleteEvent(this, note.calendarEventId)
+        if (playingNoteId == note.id) stopPlayback()
+        note.audioFilename?.let { storedAudioFile(it)?.delete() }
+        note.audioAttachments.forEach { storedAudioFile(it.filename)?.delete() }
+        note.imageFilenames.forEach { storedImageFile(it)?.delete() }
+        notes.removeAll { it.id == note.id }
+    }
+
+    private fun actionLabel(text: String, callback: () -> Unit): TextView =
+        label(text, 14f, indigo, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(13), dp(12), dp(13), dp(12))
+            background = shape(Color.rgb(240, 244, 255), 12, Color.rgb(218, 225, 249))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { callback() }
+        }
+
+    /** A note is a folder-like node: it can contain children and independent attachments. */
+    private fun showNoteDetail(note: Note) {
+        if (notes.none { it.id == note.id } || isFinishing) return
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(18), dp(10), dp(18), dp(15))
+        }
+        val scroller = ScrollView(this).apply { addView(content) }
+        val detail = AlertDialog.Builder(this)
+            .setTitle(note.text)
+            .setView(scroller)
+            .setPositiveButton("بستن", null)
+            .create()
+        content.addView(label("دسته: " + note.category, 12f, muted),
+            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+
+        val firstRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        content.addView(firstRow, LinearLayout.LayoutParams(-1, -2))
+        firstRow.addView(actionLabel("افزودن زیرشاخه") {
+            detail.dismiss()
+            showAddChildDialog(note)
+        }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(6) })
+        firstRow.addView(actionLabel("افزودن عکس") {
+            pickingImageForNoteId = note.id
+            getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
+                .putString("image_target", note.id).apply()
+            detail.dismiss()
+            val choose = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "image/*"
+            }
+            startActivityForResult(choose, 2014)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+
+        val secondRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        content.addView(secondRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        secondRow.addView(actionLabel("ضبط صوت در این یادداشت") {
+            voiceTargetNoteId = note.id
+            getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE).edit()
+                .putString("target_note_id", note.id).apply()
+            detail.dismiss()
+            onMicrophoneClicked()
+        }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(6) })
+        secondRow.addView(actionLabel(if (note.completed) "بازگرداندن به جاری" else "علامت انجام") {
+            toggleCompleted(note)
+            detail.dismiss()
+            showNoteDetail(note)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+
+        if (note.audioFilename != null) {
+            content.addView(label("صدای اصلی یادداشت", 15f, ink, true),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(18) })
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            content.addView(row)
+            row.addView(actionLabel("پخش") { toggleVoicePlayback(note) },
+                LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(actionLabel("اشتراک‌گذاری") { shareAudio(note.audioFilename) },
+                LinearLayout.LayoutParams(0, -2, 1f))
+        }
+
+        if (note.imageFilenames.isNotEmpty()) {
+            content.addView(label("عکس‌های این یادداشت", 16f, ink, true),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(19) })
+            note.imageFilenames.toList().forEach { name ->
+                val file = storedImageFile(name)
+                if (file != null && file.isFile) {
+                    val picture = ImageView(this).apply {
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        val bounds = android.graphics.BitmapFactory.Options().apply {
+                            inJustDecodeBounds = true
+                        }
+                        android.graphics.BitmapFactory.decodeFile(file.absolutePath, bounds)
+                        val scale = (maxOf(bounds.outWidth, bounds.outHeight) / 960).coerceAtLeast(1)
+                        val options = android.graphics.BitmapFactory.Options().apply {
+                            inSampleSize = scale
+                        }
+                        setImageBitmap(android.graphics.BitmapFactory.decodeFile(file.absolutePath, options))
+                        background = shape(Color.rgb(240, 244, 247), 10)
+                    }
+                    content.addView(picture, LinearLayout.LayoutParams(-1, dp(170)).apply {
+                        topMargin = dp(9)
+                    })
+                    content.addView(actionLabel("حذف این عکس") {
+                        AlertDialog.Builder(this).setTitle("حذف عکس")
+                            .setMessage("این عکس از یادداشت حذف شود؟")
+                            .setNegativeButton("انصراف", null)
+                            .setPositiveButton("حذف") { _, _ ->
+                                note.imageFilenames.remove(name)
+                                file.delete()
+                                saveNotes()
+                                renderNotes()
+                                detail.dismiss()
+                                showNoteDetail(note)
+                            }.show()
+                    }, LinearLayout.LayoutParams(-1, -2))
+                }
+            }
+        }
+
+        if (note.audioAttachments.isNotEmpty()) {
+            content.addView(label("صداهای پیوست", 16f, ink, true),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(19) })
+            note.audioAttachments.toList().forEach { attachment ->
+                content.addView(label(attachment.title + "  " + formatDuration(attachment.durationMs),
+                    14f, ink), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(11) })
+                val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                content.addView(controls)
+                controls.addView(actionLabel("پخش") {
+                    toggleVoicePlayback(Note("attachment-" + attachment.filename,
+                        attachment.title, false, Color.WHITE,
+                        audioFilename = attachment.filename,
+                        audioDurationMs = attachment.durationMs))
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                controls.addView(actionLabel("اشتراک‌گذاری") { shareAudio(attachment.filename) },
+                    LinearLayout.LayoutParams(0, -2, 1f))
+                controls.addView(actionLabel("حذف") {
+                    AlertDialog.Builder(this).setTitle("حذف صوت")
+                        .setMessage("فایل صوتی از این یادداشت حذف شود؟")
+                        .setNegativeButton("انصراف", null)
+                        .setPositiveButton("حذف") { _, _ ->
+                            note.audioAttachments.remove(attachment)
+                            storedAudioFile(attachment.filename)?.delete()
+                            saveNotes()
+                            renderNotes()
+                            detail.dismiss()
+                            showNoteDetail(note)
+                        }.show()
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+            }
+        }
+
+        val children = notes.filter { it.parentId == note.id }
+        content.addView(label("زیرشاخه‌ها (" + fa(children.size) + ")", 16f, ink, true),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(20) })
+        if (children.isEmpty()) {
+            content.addView(label("هنوز زیرشاخه‌ای ثبت نشده است.", 13f, muted))
+        } else {
+            children.forEach { child ->
+                content.addView(actionLabel("◀  " + child.text) {
+                    detail.dismiss()
+                    showNoteDetail(child)
+                }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+            }
+        }
+        detail.show()
+    }
+
+    private fun showAddChildDialog(parent: Note) {
+        val field = EditText(this).apply {
+            hint = "عنوان زیرشاخه..."
+            typeface = textFont
+            setSingleLine(true)
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+        }
+        val dialog = AlertDialog.Builder(this).setTitle("زیرشاخه جدید")
+            .setView(field)
+            .setNegativeButton("انصراف") { _, _ -> showNoteDetail(parent) }
+            .setPositiveButton("ثبت", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val title = field.text.toString().trim()
+                if (title.isEmpty()) {
+                    field.error = "عنوان را وارد کنید"
+                    return@setOnClickListener
+                }
+                notes.add(Note(UUID.randomUUID().toString(), title, false,
+                    palette[Random.nextInt(palette.size)],
+                    category = parent.category, parentId = parent.id))
+                saveNotes()
+                renderNotes()
+                dialog.dismiss()
+                showNoteDetail(parent)
+            }
+        }
+        dialog.show()
+    }
+
+    private fun storedImageFile(filename: String): File? {
+        if (!Regex("^[0-9a-fA-F-]{36}\\.(jpg|png|webp)$").matches(filename)) return null
+        return File(File(filesDir, "note_images"), filename)
+    }
+
+    @Deprecated("Uses the platform document picker for images")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != 2014) return
+        val prefs = getSharedPreferences("checklist_native", MODE_PRIVATE)
+        val targetId = pickingImageForNoteId ?: prefs.getString("image_target", null)
+        pickingImageForNoteId = null
+        prefs.edit().remove("image_target").apply()
+        val note = notes.firstOrNull { it.id == targetId } ?: return
+        val uri = if (resultCode == RESULT_OK) data?.data else null
+        if (uri == null) {
+            showNoteDetail(note)
+            return
+        }
+        val extension = when (contentResolver.getType(uri)) {
+            "image/png" -> "png"
+            "image/webp" -> "webp"
+            else -> "jpg"
+        }
+        val dir = File(filesDir, "note_images")
+        dir.mkdirs()
+        val filename = UUID.randomUUID().toString() + "." + extension
+        val file = storedImageFile(filename) ?: return
+        val saved = runCatching {
+            contentResolver.openInputStream(uri)?.use { source ->
+                file.outputStream().use { target ->
+                    val buffer = ByteArray(8192)
+                    var total = 0L
+                    while (true) {
+                        val read = source.read(buffer)
+                        if (read < 0) break
+                        total += read
+                        if (total > 15L * 1024 * 1024) error("Image too large")
+                        target.write(buffer, 0, read)
+                    }
+                    total > 0L
+                }
+            } == true
+        }.getOrDefault(false)
+        if (saved) {
+            note.imageFilenames.add(filename)
+            saveNotes()
+            renderNotes()
+        } else {
+            file.delete()
+            Toast.makeText(this, "تصویر ذخیره نشد یا حجم آن بیشتر از ۱۵ مگابایت است", Toast.LENGTH_LONG).show()
+        }
+        showNoteDetail(note)
+    }
+
+    private fun shareAudio(filename: String?) {
+        val file = filename?.let { storedAudioFile(it) }
+        if (file == null || !file.isFile) {
+            Toast.makeText(this, "فایل صوتی پیدا نشد", Toast.LENGTH_LONG).show()
+            return
+        }
+        val audioUri = VoiceFileProvider.uri(this, file.name)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "audio/mp4"
+            putExtra(Intent.EXTRA_STREAM, audioUri)
+            clipData = android.content.ClipData.newRawUri("voice", audioUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(send, "اشتراک‌گذاری یادداشت صوتی"))
+    }
+
     private fun addNote() {
-        if (recorder != null) finishVoiceRecording()
+        if (VoiceRecordingService.isRecording) {
+            finishVoiceRecording()
+            uiHandler.postDelayed({
+                syncVoiceDraft()
+                if (pendingVoiceFilename != null) showVoiceNoteNameDialog()
+            }, 700L)
+            return
+        }
+        syncVoiceDraft()
         if (pendingVoiceFilename != null) {
             showVoiceNoteNameDialog()
             return
         }
         val text = input.text.toString().trim()
         if (text.isEmpty()) return
-        notes.add(Note(UUID.randomUUID().toString(), text, false, palette[Random.nextInt(palette.size)]))
+        notes.add(Note(UUID.randomUUID().toString(), text, false, palette[Random.nextInt(palette.size)], category = selectedCategory))
         saveNotes()
         input.text.clear()
         if (filter != Filter.ALL) {
@@ -933,7 +1297,7 @@ class MainActivity : Activity() {
 
     private fun refreshVoiceComposer() {
         if (!::voiceStatus.isInitialized) return
-        val isRecording = recorder != null
+        val isRecording = VoiceRecordingService.isRecording
         val hasDraft = pendingVoiceFilename != null
         val active = isRecording || hasDraft
 
@@ -985,15 +1349,30 @@ class MainActivity : Activity() {
                 if (isRecording) Color.rgb(252, 225, 226)
                 else Color.rgb(210, 242, 227))
             voiceTimer.text = if (hasDraft) formatDuration(pendingVoiceDurationMs)
-                else formatDuration(SystemClock.elapsedRealtime() - recordingStartedAt)
+                else formatDuration(SystemClock.elapsedRealtime() - VoiceRecordingService.recordingStartedAt)
+        }
+    }
+
+    private fun syncVoiceDraft() {
+        if (VoiceRecordingService.isRecording) return
+        val prefs = getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE)
+        val stored = prefs.getString("draft_filename", null)
+        val file = stored?.let { storedAudioFile(it) }
+        if (file != null && file.isFile && file.length() >= 512L) {
+            pendingVoiceFilename = stored
+            pendingVoiceDurationMs = prefs.getLong("draft_duration", 0L)
+            voiceTargetNoteId = prefs.getString("target_note_id", null)
+        } else if (stored != null) {
+            prefs.edit().remove("draft_filename").remove("draft_duration").apply()
         }
     }
 
     private fun onMicrophoneClicked() {
-        if (recorder != null) {
+        if (VoiceRecordingService.isRecording) {
             finishVoiceRecording()
             return
         }
+        syncVoiceDraft()
         if (pendingVoiceFilename != null) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 912)
@@ -1002,75 +1381,56 @@ class MainActivity : Activity() {
         startVoiceRecording()
     }
 
-    @Suppress("DEPRECATION")
     private fun startVoiceRecording() {
-        if (recorder != null || pendingVoiceFilename != null) return
+        if (VoiceRecordingService.isRecording || pendingVoiceFilename != null) return
         stopPlayback()
-        val directory = File(filesDir, "voice_notes")
-        if (!directory.exists() && !directory.mkdirs()) {
-            Toast.makeText(this, "امکان ذخیره صدا وجود ندارد", Toast.LENGTH_LONG).show()
-            return
-        }
-        val filename = UUID.randomUUID().toString() + ".m4a"
-        val file = storedAudioFile(filename) ?: return
-        var newRecorder: MediaRecorder? = null
         try {
-            newRecorder = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else MediaRecorder()
-            newRecorder.setAudioSource(MediaRecorder.AudioSource.MIC)
-            newRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            newRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            newRecorder.setAudioEncodingBitRate(64000)
-            newRecorder.setAudioSamplingRate(44100)
-            newRecorder.setOutputFile(file.absolutePath)
-            newRecorder.prepare()
-            newRecorder.start()
-            recorder = newRecorder
-            recordingFilename = filename
-            recordingStartedAt = SystemClock.elapsedRealtime()
-            refreshVoiceComposer()
-            uiHandler.post(voiceTicker)
+            startForegroundService(Intent(this, VoiceRecordingService::class.java).apply {
+                action = VoiceRecordingService.ACTION_START
+            })
+            uiHandler.postDelayed({
+                refreshVoiceComposer()
+                if (VoiceRecordingService.isRecording) {
+                    uiHandler.removeCallbacks(voiceTicker)
+                    uiHandler.post(voiceTicker)
+                } else {
+                    Toast.makeText(this, "ضبط شروع نشد؛ مجوز و وضعیت میکروفون را بررسی کنید",
+                        Toast.LENGTH_LONG).show()
+                }
+            }, 550L)
         } catch (_: Exception) {
-            runCatching { newRecorder?.release() }
-            file.delete()
-            Toast.makeText(this, "میکروفون در دسترس نیست یا ضبط انجام نشد", Toast.LENGTH_LONG).show()
-            refreshVoiceComposer()
+            Toast.makeText(this, "برای ضبط، برنامه باید باز و مجوز میکروفون فعال باشد",
+                Toast.LENGTH_LONG).show()
         }
     }
 
     private fun finishVoiceRecording() {
-        val currentRecorder = recorder ?: return
-        val filename = recordingFilename
-        val duration = SystemClock.elapsedRealtime() - recordingStartedAt
-        recorder = null
-        recordingFilename = null
+        if (!VoiceRecordingService.isRecording) return
+        startService(Intent(this, VoiceRecordingService::class.java).apply {
+            action = VoiceRecordingService.ACTION_STOP
+        })
         uiHandler.removeCallbacks(voiceTicker)
-        val completed = runCatching { currentRecorder.stop() }.isSuccess
-        runCatching { currentRecorder.release() }
-        val file = filename?.let { storedAudioFile(it) }
-        if (!completed || file == null || !file.isFile || file.length() < 512L) {
-            file?.delete()
-            Toast.makeText(this, "ضبط صدا کامل نشد. دوباره امتحان کنید", Toast.LENGTH_LONG).show()
-        } else {
-            pendingVoiceFilename = filename
-            pendingVoiceDurationMs = duration
-        }
-        refreshVoiceComposer()
+        uiHandler.postDelayed({
+            syncVoiceDraft()
+            refreshVoiceComposer()
+        }, 450L)
     }
 
     private fun discardVoiceRecording() {
-        if (recorder != null) {
-            val currentRecorder = recorder
-            recorder = null
-            uiHandler.removeCallbacks(voiceTicker)
-            runCatching { currentRecorder?.stop() }
-            runCatching { currentRecorder?.release() }
-            recordingFilename?.let { storedAudioFile(it)?.delete() }
-            recordingFilename = null
+        if (VoiceRecordingService.isRecording) {
+            startService(Intent(this, VoiceRecordingService::class.java).apply {
+                action = VoiceRecordingService.ACTION_CANCEL
+            })
         }
+        uiHandler.removeCallbacks(voiceTicker)
         pendingVoiceFilename?.let { storedAudioFile(it)?.delete() }
         pendingVoiceFilename = null
         pendingVoiceDurationMs = 0L
-        refreshVoiceComposer()
+        voiceTargetNoteId = null
+        getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE).edit()
+            .remove("draft_filename").remove("draft_duration")
+            .remove("target_note_id").apply()
+        uiHandler.postDelayed({ refreshVoiceComposer() }, 350L)
     }
 
     private fun showVoiceNoteNameDialog() {
@@ -1129,24 +1489,37 @@ class MainActivity : Activity() {
             Toast.makeText(this, "فایل صدای ضبط‌شده پیدا نشد", Toast.LENGTH_LONG).show()
             return
         }
-        notes.add(Note(
-            UUID.randomUUID().toString(),
-            title,
-            false,
-            palette[Random.nextInt(palette.size)],
-            audioFilename = filename,
-            audioDurationMs = pendingVoiceDurationMs
-        ))
+        val targetId = voiceTargetNoteId ?: getSharedPreferences(
+            VoiceRecordingService.PREFS, MODE_PRIVATE).getString("target_note_id", null)
+        val target = notes.firstOrNull { it.id == targetId }
+        if (target != null) {
+            target.audioAttachments.add(AudioAttachment(filename, title, pendingVoiceDurationMs))
+        } else {
+            notes.add(Note(
+                UUID.randomUUID().toString(),
+                title,
+                false,
+                palette[Random.nextInt(palette.size)],
+                audioFilename = filename,
+                audioDurationMs = pendingVoiceDurationMs,
+                category = selectedCategory
+            ))
+        }
         saveNotes()
         pendingVoiceFilename = null
         pendingVoiceDurationMs = 0L
+        voiceTargetNoteId = null
+        getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE).edit()
+            .remove("draft_filename").remove("draft_duration")
+            .remove("target_note_id").apply()
         refreshVoiceComposer()
         if (filter != Filter.ALL) {
             filter = Filter.ALL
             updateFilters()
         }
         renderNotes()
-        scroll.post { scroll.smoothScrollTo(0, noteList.bottom) }
+        if (target != null) showNoteDetail(target)
+        else scroll.post { scroll.smoothScrollTo(0, noteList.bottom) }
     }
 
     private fun stopPlayback() {
@@ -1339,7 +1712,28 @@ class MainActivity : Activity() {
                     obj.optLong("reminderAt", 0L).takeIf { it > 0L },
                     obj.optLong("calendarEventId", 0L).takeIf { it > 0L },
                     obj.optString("audioFilename", "").takeIf { it.isNotEmpty() },
-                    obj.optLong("audioDurationMs", 0L).coerceAtLeast(0L)
+                    obj.optLong("audioDurationMs", 0L).coerceAtLeast(0L),
+                    category = obj.optString("category", "کتابخانه").takeIf { it in categories }
+                        ?: "کتابخانه",
+                    parentId = obj.optString("parentId", "").takeIf { it.isNotEmpty() },
+                    imageFilenames = mutableListOf<String>().apply {
+                        val images = obj.optJSONArray("images") ?: JSONArray()
+                        for (j in 0 until images.length()) {
+                            val name = images.optString(j)
+                            if (Regex("^[0-9a-fA-F-]{36}\\.(jpg|png|webp)$").matches(name)) add(name)
+                        }
+                    },
+                    audioAttachments = mutableListOf<AudioAttachment>().apply {
+                        val audio = obj.optJSONArray("audioAttachments") ?: JSONArray()
+                        for (j in 0 until audio.length()) {
+                            val item = audio.optJSONObject(j) ?: continue
+                            val name = item.optString("filename")
+                            if (Regex("^[0-9a-fA-F-]{36}\\.m4a$").matches(name)) add(
+                                AudioAttachment(name, item.optString("title", "صوت"),
+                                    item.optLong("durationMs", 0L))
+                            )
+                        }
+                    }
                 ))
             }
         }
@@ -1357,6 +1751,16 @@ class MainActivity : Activity() {
                 put("calendarEventId", it.calendarEventId ?: 0L)
                 put("audioFilename", it.audioFilename ?: "")
                 put("audioDurationMs", it.audioDurationMs)
+                put("category", it.category)
+                put("parentId", it.parentId ?: "")
+                put("images", JSONArray().apply { it.imageFilenames.forEach { name -> put(name) } })
+                put("audioAttachments", JSONArray().apply {
+                    it.audioAttachments.forEach { item -> put(JSONObject().apply {
+                        put("filename", item.filename)
+                        put("title", item.title)
+                        put("durationMs", item.durationMs)
+                    }) }
+                })
             })
         }
         getSharedPreferences("checklist_native", MODE_PRIVATE)
