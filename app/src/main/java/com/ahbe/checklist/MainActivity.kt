@@ -1025,7 +1025,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
-        listScroll.addView(list, ScrollView.LayoutParams(-1, -2))
+        listScroll.addView(list, FrameLayout.LayoutParams(-1, -2))
 
         val children = notes.filter { it.parentId == note.id }
         children.forEachIndexed { index, child -> addNoteCard(child, index + 1, list) }
