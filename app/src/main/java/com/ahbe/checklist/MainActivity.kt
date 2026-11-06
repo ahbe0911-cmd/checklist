@@ -1932,6 +1932,156 @@ class MainActivity : Activity() {
     }
 
 
+
+    /** Compact inline audio player; waveform bars animate while playback is active. */
+    private fun compactAudioPlayer(filename: String, durationMs: Long): LinearLayout {
+        val playerId = "attached-" + filename
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            background = shape(Color.rgb(245, 248, 255), 12, Color.rgb(227, 235, 251))
+            setPadding(dp(10), dp(8), dp(10), dp(7))
+        }
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        row.addView(controls, LinearLayout.LayoutParams(-1, -2))
+        val play = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_play_voice)
+            imageTintList = ColorStateList.valueOf(Color.WHITE)
+            background = shape(indigo, 20)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            contentDescription = "پخش یا توقف صدا"
+        }
+        controls.addView(play, LinearLayout.LayoutParams(dp(39), dp(39)))
+        val wave = object : View(this) {
+            private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+            override fun onDraw(canvas: android.graphics.Canvas) {
+                super.onDraw(canvas)
+                val barCount = 34
+                val gap = width.toFloat() / barCount
+                val active = playingNoteId == playerId && voicePlayer?.isPlaying == true
+                val phase = if (active) SystemClock.uptimeMillis() / 90 else 0L
+                val radius = dp(2).toFloat()
+                for (i in 0 until barCount) {
+                    val weight = 0.26f + kotlin.math.abs(kotlin.math.sin(
+                        (i * 0.74 + (i % 7) * 0.35 + phase * 0.14))) * 0.70f
+                    val h = (height * weight).toFloat().coerceAtLeast(dp(3).toFloat())
+                    paint.color = if (active) indigo else Color.rgb(151, 167, 214)
+                    val left = (i + 0.17f) * gap
+                    canvas.drawRoundRect(left, (height - h) / 2, left + gap * 0.48f,
+                        (height + h) / 2, radius, radius, paint)
+                }
+            }
+        }
+        controls.addView(wave, LinearLayout.LayoutParams(0, dp(35), 1f).apply {
+            marginStart = dp(10)
+            marginEnd = dp(8)
+        })
+        var speedIndex = 0
+        val speeds = floatArrayOf(1f, 1.5f, 2f)
+        val speed = label("۱×", 12f, indigo, true).apply {
+            typeface = titleFont
+            gravity = Gravity.CENTER
+            background = shape(Color.WHITE, 9, softBorder)
+            setPadding(dp(5), dp(7), dp(5), dp(7))
+            contentDescription = "تغییر سرعت پخش"
+            setOnClickListener {
+                speedIndex = (speedIndex + 1) % speeds.size
+                text = arrayOf("۱×", "۱٫۵×", "۲×")[speedIndex]
+                if (playingNoteId == playerId) {
+                    runCatching {
+                        voicePlayer?.playbackParams =
+                            voicePlayer!!.playbackParams.setSpeed(speeds[speedIndex])
+                    }
+                }
+            }
+        }
+        controls.addView(speed, LinearLayout.LayoutParams(dp(48), dp(39)))
+        val slider = SeekBar(this).apply {
+            max = 1000
+            progress = 0
+            progressTintList = ColorStateList.valueOf(indigo)
+            thumbTintList = ColorStateList.valueOf(indigo)
+            progressBackgroundTintList = ColorStateList.valueOf(Color.rgb(209, 218, 239))
+            setPadding(dp(1), 0, dp(1), 0)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
+                    if (fromUser && playingNoteId == playerId) {
+                        voicePlayer?.let { media ->
+                            runCatching { media.seekTo((media.duration * value / 1000f).toInt()) }
+                        }
+                    }
+                }
+                override fun onStartTrackingTouch(bar: SeekBar?) {}
+                override fun onStopTrackingTouch(bar: SeekBar?) {}
+            })
+        }
+        row.addView(slider, LinearLayout.LayoutParams(-1, dp(30)))
+        val time = label("۰:۰۰ / " + formatDuration(durationMs), 11f, muted).apply {
+            typeface = titleFont
+            gravity = Gravity.END
+        }
+        row.addView(time, LinearLayout.LayoutParams(-1, -2))
+        fun repaintState() {
+            val playing = playingNoteId == playerId && voicePlayer?.isPlaying == true
+            play.setImageResource(if (playing) R.drawable.ic_pause_voice else R.drawable.ic_play_voice)
+            wave.invalidate()
+        }
+        play.setOnClickListener {
+            if (playingNoteId == playerId && voicePlayer != null) {
+                val media = voicePlayer!!
+                if (media.isPlaying) media.pause() else media.start()
+                repaintState()
+                return@setOnClickListener
+            }
+            val file = storedAudioFile(filename)
+            if (file == null || !file.isFile) {
+                Toast.makeText(this, "فایل صدا پیدا نشد", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            stopPlayback()
+            val media = MediaPlayer()
+            val started = runCatching {
+                media.setDataSource(file.absolutePath)
+                media.prepare()
+                media.start()
+                media.playbackParams = media.playbackParams.setSpeed(speeds[speedIndex])
+                true
+            }.getOrDefault(false)
+            if (!started) {
+                runCatching { media.release() }
+                Toast.makeText(this, "پخش صدا انجام نشد", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            voicePlayer = media
+            playingNoteId = playerId
+            media.setOnCompletionListener {
+                stopPlayback()
+                slider.progress = 0
+                time.text = "۰:۰۰ / " + formatDuration(durationMs)
+                repaintState()
+            }
+            val ticker = object : Runnable {
+                override fun run() {
+                    if (playingNoteId != playerId || voicePlayer !== media) return
+                    val position = runCatching { media.currentPosition }.getOrDefault(0)
+                    val total = runCatching { media.duration }.getOrDefault(0)
+                    slider.progress = if (total > 0) position * 1000 / total else 0
+                    time.text = formatDuration(position.toLong()) + " / " +
+                        formatDuration(total.toLong())
+                    repaintState()
+                    uiHandler.postDelayed(this, 160L)
+                }
+            }
+            compactPlayerTicker = ticker
+            uiHandler.post(ticker)
+            repaintState()
+        }
+        return row
+    }
+
     private fun imageTitle(filename: String): String =
         getSharedPreferences("image_display_titles", MODE_PRIVATE)
             .getString(filename, null)?.takeIf { it.isNotBlank() }
@@ -2660,6 +2810,8 @@ class MainActivity : Activity() {
     }
 
     private fun stopPlayback() {
+        compactPlayerTicker?.let { uiHandler.removeCallbacks(it) }
+        compactPlayerTicker = null
         val previous = voicePlayer
         voicePlayer = null
         playingNoteId = null
