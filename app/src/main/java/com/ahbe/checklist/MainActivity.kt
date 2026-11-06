@@ -1037,7 +1037,7 @@ class MainActivity : Activity() {
         }
 
     /** A note is a folder-like node: it can contain children and independent attachments. */
-    private fun showNoteDetail(note: Note) {
+    private fun showNoteDetail(note: Note, scrollToBottom: Boolean = false) {
         if (notes.none { it.id == note.id } || isFinishing) return
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1199,50 +1199,156 @@ class MainActivity : Activity() {
             }
         }
 
+
         val children = notes.filter { it.parentId == note.id }
-        content.addView(label("زیرشاخه‌ها (" + fa(children.size) + ")", 16f, ink, true),
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(20) })
-        if (children.isEmpty()) {
-            content.addView(label("هنوز زیرشاخه‌ای ثبت نشده است.", 13f, muted))
-        } else {
-            children.forEach { child ->
-                content.addView(actionLabel("◀  " + child.text) {
+        if (children.isNotEmpty()) {
+            content.addView(View(this).apply { setBackgroundColor(softBorder) },
+                LinearLayout.LayoutParams(-1, dp(1)).apply { topMargin = dp(12) })
+        }
+        children.forEach { child ->
+            val item = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(9), dp(5), dp(9), dp(5))
+                background = shape(Color.rgb(249, 250, 252), 10)
+            }
+            content.addView(item, LinearLayout.LayoutParams(-1, -2).apply {
+                topMargin = dp(7)
+            })
+            item.addView(label(if (child.completed) "☑" else "□", 22f,
+                if (child.completed) emerald else muted).apply {
+                setPadding(dp(2), 0, dp(9), 0)
+                contentDescription = "علامت انجام"
+                setOnClickListener {
+                    toggleCompleted(child)
+                    detail.dismiss()
+                    showNoteDetail(note)
+                }
+            })
+            val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            item.addView(body, LinearLayout.LayoutParams(0, -2, 1f))
+            body.addView(label(child.text, 15f, if (child.completed) muted else ink).apply {
+                typeface = textFont
+                if (child.completed) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
+                setPadding(0, dp(7), 0, dp(7))
+                setOnClickListener {
                     detail.dismiss()
                     showNoteDetail(child)
-                }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+                }
+            }, LinearLayout.LayoutParams(-1, -2))
+            child.dueAt?.let { due ->
+                body.addView(label("تاریخ اجرا: " + formatDueDate(due), 12f,
+                    Color.rgb(195, 45, 52), true).apply {
+                    typeface = textFont
+                    setPadding(0, 0, 0, dp(6))
+                    setOnClickListener {
+                        showPersianDatePicker(child.dueAt) { selected ->
+                            child.dueAt = selected
+                            saveNotes()
+                            detail.dismiss()
+                            showNoteDetail(note)
+                        }
+                    }
+                })
+            }
+            item.addView(label("تاریخ", 11f, indigo).apply {
+                setPadding(dp(7), dp(10), dp(7), dp(10))
+                setOnClickListener {
+                    showPersianDatePicker(child.dueAt) { selected ->
+                        child.dueAt = selected
+                        saveNotes()
+                        detail.dismiss()
+                        showNoteDetail(note)
+                    }
+                }
+            })
+            item.addView(label("×", 20f, muted).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(9), dp(8), dp(3), dp(8))
+                contentDescription = "حذف " + child.text
+                setOnClickListener {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("حذف این مورد")
+                        .setMessage("«" + child.text + "» و تمام زیرمجموعه‌های آن حذف شوند؟")
+                        .setNegativeButton("انصراف", null)
+                        .setPositiveButton("حذف") { _, _ ->
+                            removeNoteTree(child)
+                            saveNotes()
+                            renderNotes()
+                            detail.dismiss()
+                            showNoteDetail(note)
+                        }.show()
+                }
+            })
+        }
+
+        // One familiar text field plus a send button. No separate sub-branch dialog.
+        var draftDueAt: Long? = null
+        val composer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = shape(Color.rgb(248, 250, 252), 14, softBorder)
+            setPadding(dp(6), dp(5), dp(6), dp(5))
+        }
+        content.addView(composer, LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = dp(14)
+        })
+        val childInput = EditText(this).apply {
+            hint = "یک مورد جدید بنویس..."
+            typeface = textFont
+            textSize = 15f
+            setSingleLine(true)
+            setTextColor(ink)
+            setHintTextColor(muted)
+            background = null
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(9), 0, dp(9), 0)
+            imeOptions = EditorInfo.IME_ACTION_DONE
+        }
+        composer.addView(childInput, LinearLayout.LayoutParams(0, dp(43), 1f))
+        val sendChild = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_send_message)
+            imageTintList = ColorStateList.valueOf(Color.WHITE)
+            background = shape(ink, 12)
+            setPadding(dp(11), dp(11), dp(11), dp(11))
+            contentDescription = "ثبت مورد در این یادداشت"
+        }
+        composer.addView(sendChild, LinearLayout.LayoutParams(dp(43), dp(43)))
+        val draftDate = label("تاریخ اجرا (اختیاری)", 12f, muted).apply {
+            setPadding(dp(6), dp(10), dp(6), dp(5))
+            setOnClickListener {
+                showPersianDatePicker(draftDueAt) { selected ->
+                    draftDueAt = selected
+                    text = selected?.let { "تاریخ اجرا: " + formatDueDate(it) }
+                        ?: "تاریخ اجرا (اختیاری)"
+                    setTextColor(if (selected == null) muted else Color.rgb(195, 45, 52))
+                }
             }
         }
-        detail.show()
-    }
-
-    private fun showAddChildDialog(parent: Note) {
-        val field = EditText(this).apply {
-            hint = "عنوان زیرشاخه..."
-            typeface = textFont
-            setSingleLine(true)
-            setPadding(dp(14), dp(8), dp(14), dp(8))
-        }
-        val dialog = AlertDialog.Builder(this).setTitle("زیرشاخه جدید")
-            .setView(field)
-            .setNegativeButton("انصراف") { _, _ -> showNoteDetail(parent) }
-            .setPositiveButton("ثبت", null).create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val title = field.text.toString().trim()
-                if (title.isEmpty()) {
-                    field.error = "عنوان را وارد کنید"
-                    return@setOnClickListener
-                }
-                notes.add(Note(UUID.randomUUID().toString(), title, false,
+        content.addView(draftDate, LinearLayout.LayoutParams(-1, -2))
+        val submitChild = {
+            val value = childInput.text.toString().trim()
+            if (value.isEmpty()) {
+                childInput.error = "متن را بنویس"
+            } else {
+                notes.add(Note(UUID.randomUUID().toString(), value, false,
                     palette[Random.nextInt(palette.size)],
-                    category = parent.category, parentId = parent.id))
+                    category = note.category, parentId = note.id, dueAt = draftDueAt))
                 saveNotes()
                 renderNotes()
-                dialog.dismiss()
-                showNoteDetail(parent)
+                detail.dismiss()
+                showNoteDetail(note, true)
             }
         }
-        dialog.show()
+        sendChild.setOnClickListener { submitChild() }
+        childInput.setOnEditorActionListener { _, action, _ ->
+            if (action == EditorInfo.IME_ACTION_DONE) {
+                submitChild()
+                true
+            } else false
+        }
+        detail.show()
+        if (scrollToBottom) scroller.post { scroller.fullScroll(View.FOCUS_DOWN) }
     }
 
     private fun storedImageFile(filename: String): File? {
