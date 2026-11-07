@@ -23,6 +23,8 @@ import android.view.WindowManager
 import android.widget.*
 import java.io.File
 import java.time.*
+import android.icu.util.PersianCalendar
+import android.icu.util.Calendar as IcuCalendar
 import java.time.format.DateTimeFormatter
 import java.util.TimeZone
 import java.util.UUID
@@ -161,6 +163,12 @@ object AlarmUi {
             ))controls.addView(button(a,pair.first){pair.second()},
                 LinearLayout.LayoutParams(0,-2,1f).apply{marginStart=dp(a,5)})
         }
+        content.addView(button(a,"تقویم شمسی آلارم‌ها"){
+            choosePersianDate(a,System.currentTimeMillis()){selected->
+                val fresh=AlarmItem(title="آلارم جدید",repeat=0,startDate=selected)
+                edit(a,fresh,false,dialog)
+            }
+        },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,12)})
         content.addView(button(a,"＋ افزودن آلارم"){
             edit(a,AlarmItem(title="آلارم جدید"),false,dialog)
         },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,12);bottomMargin=dp(a,16)})
@@ -204,12 +212,46 @@ object AlarmUi {
     private fun nextText(a:Activity,item:AlarmItem):String {
         if(!item.enabled)return "غیرفعال"
         val time=AlarmScheduler.next(item,a)?:return "نامشخص؛ موقعیت یا تاریخ را بررسی کنید"
-        return DateTimeFormatter.ofPattern("EEE yyyy/MM/dd - HH:mm",
-            java.util.Locale("fa")).withZone(ZoneId.systemDefault())
-            .format(Instant.ofEpochMilli(time))
+        return persianDate(a,time)+" - "+displayTime(time)
     }
     private fun repeatName(i:AlarmItem)=when(i.repeat){
-        0->"یک‌بار";1->"هر روز";else->"روزهای انتخابی"
+        0->"یک‌بار";1->"هر روز";2->"روزهای انتخابی";3->"هفتگی";4->"ماهانه شمسی";else->"سالانه شمسی"
+    }
+    private fun persianDate(c:Context,millis:Long):String {
+        val p=PersianCalendar().apply{timeInMillis=millis}
+        return "%04d/%02d/%02d".format(java.util.Locale.US,p.get(IcuCalendar.YEAR),
+            p.get(IcuCalendar.MONTH)+1,p.get(IcuCalendar.DAY_OF_MONTH))
+    }
+    private fun choosePersianDate(a:Activity,initial:Long,onPick:(Long)->Unit) {
+        val p=PersianCalendar().apply{timeInMillis=if(initial>0)initial else System.currentTimeMillis()}
+        val row=LinearLayout(a).apply{
+            orientation=LinearLayout.HORIZONTAL;layoutDirection=View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(a,12),dp(a,10),dp(a,12),dp(a,10))
+        }
+        val year=NumberPicker(a).apply{minValue=1300;maxValue=1600;value=p.get(IcuCalendar.YEAR)}
+        val month=NumberPicker(a).apply{minValue=1;maxValue=12;value=p.get(IcuCalendar.MONTH)+1}
+        val day=NumberPicker(a).apply{minValue=1;maxValue=31;value=p.get(IcuCalendar.DAY_OF_MONTH)}
+        fun refresh(){
+            val probe=PersianCalendar().apply{
+                set(IcuCalendar.YEAR,year.value);set(IcuCalendar.MONTH,month.value-1)
+                set(IcuCalendar.DAY_OF_MONTH,1)
+            }
+            day.maxValue=probe.getActualMaximum(IcuCalendar.DAY_OF_MONTH)
+        }
+        year.setOnValueChangedListener{_,_,_->refresh()}
+        month.setOnValueChangedListener{_,_,_->refresh()}
+        refresh()
+        for(picker in listOf(day,month,year))row.addView(picker,LinearLayout.LayoutParams(0,-2,1f))
+        AlertDialog.Builder(a).setTitle("انتخاب تاریخ شمسی").setView(row)
+            .setNegativeButton("انصراف",null).setPositiveButton("تأیید"){_,_->
+                val chosen=PersianCalendar().apply{
+                    clear();set(IcuCalendar.YEAR,year.value);set(IcuCalendar.MONTH,month.value-1)
+                    set(IcuCalendar.DAY_OF_MONTH,day.value)
+                    set(IcuCalendar.HOUR_OF_DAY,12)
+                }
+                val local=Instant.ofEpochMilli(chosen.timeInMillis).atZone(ZoneId.systemDefault()).toLocalDate()
+                onPick(local.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
+            }.show()
     }
     private fun edit(a:Activity,item:AlarmItem,sunrise:Boolean,parent:Dialog) {
         val copy=AlarmItem.from(item.toJson())
@@ -232,10 +274,41 @@ object AlarmUi {
             clockButton=time
             layout.addView(time,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,8)})
             val repeat=Spinner(a)
-            val options=arrayOf("فقط یک‌بار","هر روز","روزهای انتخابی")
+            val options=arrayOf("فقط یک‌بار","هر روز","روزهای انتخابی","هفتگی","ماهانه شمسی","سالانه شمسی")
             repeat.adapter=ArrayAdapter(a,android.R.layout.simple_spinner_dropdown_item,options)
             repeat.setSelection(copy.repeat)
             layout.addView(txt(a,"نوع تکرار",14f,navy,true));layout.addView(repeat)
+            val dateButton=button(a,"تاریخ شروع: "+persianDate(a,if(copy.startDate>0)copy.startDate else System.currentTimeMillis())){
+                choosePersianDate(a,copy.startDate){selected->
+                    copy.startDate=selected
+                    dateButtonRef?.text="تاریخ شروع: "+persianDate(a,selected)
+                }
+            }
+            dateButtonRef=dateButton
+            layout.addView(dateButton)
+            val endButton=button(a,if(copy.endDate>0)"تاریخ پایان: "+persianDate(a,copy.endDate) else "تاریخ پایان: نامحدود"){
+                choosePersianDate(a,copy.endDate){selected->
+                    copy.endDate=selected
+                    endButtonRef?.text="تاریخ پایان: "+persianDate(a,selected)
+                }
+            }
+            endButtonRef=endButton
+            layout.addView(endButton)
+            layout.addView(button(a,"حذف تاریخ پایان"){copy.endDate=0;endButton.text="تاریخ پایان: نامحدود"})
+            val count=EditText(a).apply{
+                hint="تعداد دفعات (خالی = نامحدود)"
+                inputType=android.text.InputType.TYPE_CLASS_NUMBER
+                setText(if(copy.maxOccurrences>0)copy.maxOccurrences.toString() else "")
+            }
+            layout.addView(txt(a,"تعداد تکرار",13f,muted))
+            layout.addView(count)
+            countInput=count
+            val lastDay=CheckBox(a).apply{
+                text="در ماه کوتاه‌تر، آخرین روز ماه انتخاب شود"
+                isChecked=copy.missingDayLast
+            }
+            layout.addView(lastDay)
+            lastDayInput=lastDay
             repeat.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
                 override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,pos:Int,id:Long){
                     copy.repeat=pos
@@ -319,6 +392,18 @@ object AlarmUi {
                 Toast.makeText(a,"حداقل یک روز هفته را انتخاب کن",Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
+            if(!sunrise){
+                if(copy.startDate==0L)copy.startDate=LocalDate.now()
+                    .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                if(copy.endDate>0 && copy.endDate<copy.startDate){
+                    Toast.makeText(a,"تاریخ پایان نباید قبل از شروع باشد",Toast.LENGTH_LONG).show()
+                    return@setOnClickListener
+                }
+                copy.maxOccurrences=countInput?.text?.toString()?.toIntOrNull()?.coerceAtLeast(0)?:0
+                copy.missingDayLast=lastDayInput?.isChecked?:true
+                if(copy.repeat==0)copy.maxOccurrences=1
+                if(copy.next>0)copy.firedCount=0
+            }
             copy.vibrate=vibrate.isChecked;copy.gradual=gradual.isChecked
             copy.snooze=listOf(5,10,15)[snooze.selectedItemPosition.coerceIn(0,2)]
             if(sunrise && AlarmStore.location(a)==null) {
@@ -331,6 +416,10 @@ object AlarmUi {
         }
     }
     private var clockButton:TextView?=null
+    private var dateButtonRef:TextView?=null
+    private var endButtonRef:TextView?=null
+    private var countInput:EditText?=null
+    private var lastDayInput:CheckBox?=null
     private fun soundPicker(a:Activity,onChoose:(String)->Unit){
         stopPreview()
         val layout=container(a).apply{setPadding(dp(a,18),dp(a,5),dp(a,18),dp(a,12))}
