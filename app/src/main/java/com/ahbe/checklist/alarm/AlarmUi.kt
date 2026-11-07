@@ -278,7 +278,8 @@ object AlarmUi {
             repeat.adapter=ArrayAdapter(a,android.R.layout.simple_spinner_dropdown_item,options)
             repeat.setSelection(copy.repeat)
             layout.addView(txt(a,"نوع تکرار",14f,navy,true));layout.addView(repeat)
-            val dateButton=button(a,"تاریخ شروع: "+persianDate(a,if(copy.startDate>0)copy.startDate else System.currentTimeMillis())){
+            lateinit var dateButton:TextView
+            dateButton=button(a,"تاریخ شروع: "+persianDate(a,if(copy.startDate>0)copy.startDate else System.currentTimeMillis())){
                 choosePersianDate(a,copy.startDate){selected->
                     copy.startDate=selected
                     dateButtonRef?.text="تاریخ شروع: "+persianDate(a,selected)
