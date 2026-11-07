@@ -17,6 +17,9 @@ import android.media.MediaRecorder
 import android.net.Uri
 import android.os.*
 import android.provider.Settings
+import android.webkit.JavascriptInterface
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -505,6 +508,49 @@ object AlarmUi {
             Toast.LENGTH_LONG).show()}
         chooser=null
     }
+    private fun mapLocationPicker(a:Activity,lat:Double,lon:Double,onChoose:(Double,Double)->Unit) {
+        val web=WebView(a).apply {
+            settings.javaScriptEnabled=true
+            settings.domStorageEnabled=true
+            webViewClient=WebViewClient()
+        }
+        val selected=doubleArrayOf(lat,lon)
+        val shell=container(a)
+        shell.addView(txt(a,"روی نقشه بزنید تا مکان انتخاب شود، سپس تأیید کنید.",13f,muted))
+        shell.addView(web,LinearLayout.LayoutParams(-1,dp(a,440)))
+        val status=txt(a,"عرض: $lat | طول: $lon",13f,muted)
+        shell.addView(status)
+        class Selection {
+            @JavascriptInterface fun pick(latitude:Double,longitude:Double) {
+                if(latitude !in -90.0..90.0 || longitude !in -180.0..180.0)return
+                a.runOnUiThread {
+                    selected[0]=latitude;selected[1]=longitude
+                    status.text="عرض: $latitude | طول: $longitude"
+                }
+            }
+        }
+        web.addJavascriptInterface(Selection(),"AndroidPicker")
+        val page="""<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+            <style>html,body,#map{height:100%;margin:0}</style></head><body><div id="map"></div>
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+            <script>
+            var map=L.map('map').setView([LAT,LON],12);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              {maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+            var marker=L.marker([LAT,LON]).addTo(map);
+            map.on('click',function(e){marker.setLatLng(e.latlng);
+              AndroidPicker.pick(e.latlng.lat,e.latlng.lng);});
+            </script></body></html>"""
+            .replace("LAT",lat.toString()).replace("LON",lon.toString())
+        web.loadDataWithBaseURL("https://localhost/",page,"text/html","UTF-8",null)
+        val dialog=AlertDialog.Builder(a).setTitle("انتخاب مکان روی نقشه")
+            .setView(shell).setNegativeButton("انصراف",null)
+            .setPositiveButton("✓ تأیید مکان"){_,_->onChoose(selected[0],selected[1])}
+            .create()
+        dialog.setOnDismissListener{web.destroy()}
+        dialog.show()
+    }
     private fun locationEditor(a:Activity,done:()->Unit) {
         val layout=container(a).apply{setPadding(dp(a,21),dp(a,10),dp(a,21),dp(a,10))}
         val current=AlarmStore.location(a)
@@ -516,6 +562,15 @@ object AlarmUi {
         val zone=input("منطقه زمانی",current?.third?:TimeZone.getDefault().id)
         val place=input("نام موقعیت",if(current==null)"" else AlarmStore.locationLabel(a))
         for(v in listOf(lat,lon,zone,place))layout.addView(v)
+        layout.addView(button(a,"انتخاب مکان از روی نقشه"){
+            val startLat=lat.text.toString().toDoubleOrNull()?:current?.first?:35.7
+            val startLon=lon.text.toString().toDoubleOrNull()?:current?.second?:51.4
+            mapLocationPicker(a,startLat,startLon){latitude,longitude->
+                lat.setText(latitude.toString())
+                lon.setText(longitude.toString())
+                place.setText("مکان انتخاب‌شده روی نقشه")
+            }
+        })
         layout.addView(button(a,"دریافت موقعیت فعلی گوشی"){
             locateAfterPermission={
                 readLocation(a){latitude,longitude->
