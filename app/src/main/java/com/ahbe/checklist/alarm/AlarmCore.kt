@@ -8,6 +8,8 @@ import android.provider.Settings
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.*
+import android.icu.util.PersianCalendar
+import android.icu.util.Calendar as IcuCalendar
 import java.util.UUID
 import java.util.TimeZone
 import kotlin.math.*
@@ -19,7 +21,7 @@ data class AlarmItem(
     var sunrise: Boolean = false,
     var hour: Int = 7,
     var minute: Int = 0,
-    var repeat: Int = 1,  // 0: once; 1: daily; 2: selected weekdays
+    var repeat: Int = 1,  // 0 once, 1 daily, 2 weekdays, 3 weekly, 4 monthly, 5 yearly
     var days: Int = 127,  // Saturday=bit0 ... Friday=bit6
     var offset: Int = 15,
     var enabled: Boolean = true,
@@ -27,7 +29,12 @@ data class AlarmItem(
     var vibrate: Boolean = true,
     var snooze: Int = 10,
     var gradual: Boolean = true,
-    var next: Long = 0
+    var next: Long = 0,
+    var startDate: Long = 0, // local date at midnight, epoch millis
+    var endDate: Long = 0, // inclusive; zero means no end
+    var maxOccurrences: Int = 0, // zero means unlimited
+    var firedCount: Int = 0,
+    var missingDayLast: Boolean = true
 ) {
     fun toJson() = JSONObject().apply {
         put("id",id);put("title",title);put("sunrise",sunrise)
@@ -35,17 +42,23 @@ data class AlarmItem(
         put("days",days);put("offset",offset);put("enabled",enabled)
         put("sound",sound);put("vibrate",vibrate);put("snooze",snooze)
         put("gradual",gradual);put("next",next)
+        put("startDate",startDate);put("endDate",endDate)
+        put("maxOccurrences",maxOccurrences);put("firedCount",firedCount)
+        put("missingDayLast",missingDayLast)
     }
     companion object {
         fun from(j: JSONObject) = AlarmItem(
             j.optString("id").ifBlank { UUID.randomUUID().toString() },
             j.optString("title","آلارم"),j.optBoolean("sunrise",false),
             j.optInt("hour",7).coerceIn(0,23),j.optInt("minute",0).coerceIn(0,59),
-            j.optInt("repeat",1).coerceIn(0,2),j.optInt("days",127).coerceIn(0,127),
+            j.optInt("repeat",1).coerceIn(0,5),j.optInt("days",127).coerceIn(0,127),
             j.optInt("offset",15).coerceIn(-1440,1440),
             j.optBoolean("enabled",true),j.optString("sound","preset:0"),
             j.optBoolean("vibrate",true),j.optInt("snooze",10).coerceIn(1,60),
-            j.optBoolean("gradual",true),j.optLong("next",0)
+            j.optBoolean("gradual",true),j.optLong("next",0),
+            j.optLong("startDate",0),j.optLong("endDate",0),
+            j.optInt("maxOccurrences",0).coerceAtLeast(0),j.optInt("firedCount",0).coerceAtLeast(0),
+            j.optBoolean("missingDayLast",true)
         )
     }
 }
@@ -128,8 +141,21 @@ object AlarmScheduler {
         val zone=runCatching { ZoneId.of(location?.third?:TimeZone.getDefault().id) }
             .getOrDefault(ZoneId.systemDefault())
         val today=Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
-        for(day in 0..370) {
+        if(!item.sunrise && item.maxOccurrences>0 && item.firedCount>=item.maxOccurrences)return null
+        val anchor=if(item.startDate>0) Instant.ofEpochMilli(item.startDate)
+            .atZone(zone).toLocalDate() else today
+        val end=if(item.endDate>0) Instant.ofEpochMilli(item.endDate)
+            .atZone(zone).toLocalDate() else null
+        val anchorPersian=PersianCalendar().apply {
+            timeInMillis=anchor.atStartOfDay(zone).toInstant().toEpochMilli()
+        }
+        val anchorDay=anchorPersian.get(IcuCalendar.DAY_OF_MONTH)
+        val anchorMonth=anchorPersian.get(IcuCalendar.MONTH)
+        val anchorYear=anchorPersian.get(IcuCalendar.YEAR)
+        for(day in 0..3700) {
             val date=today.plusDays(day.toLong())
+            if(end!=null && date.isAfter(end))break
+            if(!item.sunrise && date.isBefore(anchor))continue
             val dow=(date.dayOfWeek.value+1)%7
             if(item.sunrise) {
                 if(item.days and (1 shl dow)==0)continue
@@ -137,7 +163,26 @@ object AlarmScheduler {
                 val ring=time-item.offset*60000L
                 if(ring>now+1000L)return ring
             } else {
-                if(item.repeat==2 && item.days and (1 shl dow)==0)continue
+                val matches=when(item.repeat) {
+                    0 -> date==anchor
+                    1 -> true
+                    2 -> item.days and (1 shl dow)!=0
+                    3 -> java.time.temporal.ChronoUnit.DAYS.between(anchor,date)%7L==0L
+                    4,5 -> {
+                        val pc=PersianCalendar().apply {
+                            timeInMillis=date.atStartOfDay(zone).toInstant().toEpochMilli()
+                        }
+                        val year=pc.get(IcuCalendar.YEAR)
+                        val month=pc.get(IcuCalendar.MONTH)
+                        val max=pc.getActualMaximum(IcuCalendar.DAY_OF_MONTH)
+                        val target=if(item.missingDayLast)anchorDay.coerceAtMost(max) else anchorDay
+                        (item.repeat==4 || (month==anchorMonth && year>=anchorYear)) &&
+                            (item.repeat!=5 || month==anchorMonth) &&
+                            pc.get(IcuCalendar.DAY_OF_MONTH)==target
+                    }
+                    else -> false
+                }
+                if(!matches)continue
                 val ring=date.atTime(item.hour,item.minute).atZone(zone).toInstant().toEpochMilli()
                 if(ring>now+1000L)return ring
             }
@@ -195,11 +240,14 @@ class AlarmTriggerReceiver:BroadcastReceiver() {
         // A one-shot alarm becomes inactive after firing; its snooze must still ring.
         if(!item.enabled && !isSnooze)return
         if(!isSnooze) {
-            if(!item.sunrise && item.repeat==0) {
-                item.enabled=false;item.next=0
-                val list=AlarmStore.read(c)
-                val idx=list.indexOfFirst{it.id==id}
-                if(idx>=0){list[idx]=item;AlarmStore.save(c,list)}
+            if(!item.sunrise) {
+                item.firedCount++
+                if(item.repeat==0 || (item.maxOccurrences>0 && item.firedCount>=item.maxOccurrences)){
+                    item.enabled=false;item.next=0
+                    val list=AlarmStore.read(c)
+                    val idx=list.indexOfFirst{it.id==id}
+                    if(idx>=0){list[idx]=item;AlarmStore.save(c,list)}
+                } else AlarmScheduler.schedule(c,item)
             } else AlarmScheduler.schedule(c,item)
         }
         val ring=Intent(c,AlarmSoundService::class.java).apply {
