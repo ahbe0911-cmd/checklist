@@ -694,11 +694,61 @@ class MainActivity : Activity() {
     private fun showMainSettings() {
         AlertDialog.Builder(this)
             .setTitle("تنظیمات")
-            .setItems(arrayOf("مدیریت سربرگ‌ها", "تنظیمات ظاهری و فونت")) { _, choice ->
-                if (choice == 0) showCategoryManager() else showAppearanceSettings()
+            .setItems(arrayOf("مدیریت سربرگ‌ها", "تنظیمات ظاهری و فونت", "پشتیبان‌گیری از اطلاعات", "بازیابی نسخه پشتیبان")) { _, choice ->
+                when(choice) {
+                    0 -> showCategoryManager()
+                    1 -> showAppearanceSettings()
+                    2 -> chooseBackupDestination()
+                    3 -> chooseBackupFile()
+                }
             }
             .setNegativeButton("بستن", null)
             .show()
+    }
+
+    private fun chooseBackupDestination() {
+        val intent=Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type="application/zip"
+            putExtra(Intent.EXTRA_TITLE,"checklist-backup-${java.time.LocalDate.now()}.zip")
+        }
+        runCatching { startActivityForResult(intent,2091) }.onFailure {
+            Toast.makeText(this,"امکان انتخاب محل ذخیره وجود ندارد",Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun chooseBackupFile() {
+        val intent=Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type="application/zip"
+        }
+        runCatching { startActivityForResult(intent,2092) }.onFailure {
+            Toast.makeText(this,"امکان انتخاب فایل پشتیبان وجود ندارد",Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun confirmBackupRestore(uri:Uri) {
+        AlertDialog.Builder(this)
+            .setTitle("بازیابی اطلاعات")
+            .setMessage("اطلاعات موجود با اطلاعات فایل پشتیبان جایگزین می‌شود. ادامه می‌دهید؟")
+            .setNegativeButton("انصراف",null)
+            .setPositiveButton("بازیابی") { _,_ ->
+                Thread {
+                    val result=runCatching { UserBackup.restore(this,uri) }
+                    runOnUiThread {
+                        if(result.isSuccess) {
+                            Toast.makeText(this,"اطلاعات بازیابی شد؛ برنامه دوباره باز می‌شود",Toast.LENGTH_LONG).show()
+                            val launch=Intent(this,MainActivity::class.java).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                            }
+                            startActivity(launch)
+                            finish()
+                        } else {
+                            Toast.makeText(this,"بازیابی ناموفق بود: ${result.exceptionOrNull()?.message}",Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }.start()
+            }.show()
     }
 
     private fun normalizedCategoryName(raw: String, previous: String? = null): String? {
@@ -2201,6 +2251,22 @@ class MainActivity : Activity() {
     @Deprecated("Uses the platform document picker for images")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 2091 || requestCode == 2092) {
+            val uri=if(resultCode==RESULT_OK)data?.data else null
+            if(uri!=null) {
+                if(requestCode==2092) confirmBackupRestore(uri)
+                else Thread {
+                    val result=runCatching { UserBackup.export(this,uri) }
+                    runOnUiThread {
+                        Toast.makeText(this,
+                            if(result.isSuccess)"فایل پشتیبان ذخیره شد"
+                            else "پشتیبان‌گیری ناموفق بود: ${result.exceptionOrNull()?.message}",
+                            Toast.LENGTH_LONG).show()
+                    }
+                }.start()
+            }
+            return
+        }
         if (requestCode == com.ahbe.checklist.alarm.AlarmUi.PICK_AUDIO) {
             if (resultCode == RESULT_OK) com.ahbe.checklist.alarm.AlarmUi.receivePickedAudio(this, data)
             return
