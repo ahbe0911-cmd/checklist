@@ -23,7 +23,7 @@ import android.view.WindowManager
 import android.widget.*
 import java.io.File
 import java.time.*
-import android.icu.util.PersianCalendar
+import android.icu.util.ULocale
 import android.icu.util.Calendar as IcuCalendar
 import java.time.format.DateTimeFormatter
 import java.util.TimeZone
@@ -221,12 +221,12 @@ object AlarmUi {
         0->"یک‌بار";1->"هر روز";2->"روزهای انتخابی";3->"هفتگی";4->"ماهانه شمسی";else->"سالانه شمسی"
     }
     private fun persianDate(c:Context,millis:Long):String {
-        val p=PersianCalendar().apply{timeInMillis=millis}
+        val p=IcuCalendar.getInstance(ULocale("@calendar=persian")).apply{timeInMillis=millis}
         return "%04d/%02d/%02d".format(java.util.Locale.US,p.get(IcuCalendar.YEAR),
             p.get(IcuCalendar.MONTH)+1,p.get(IcuCalendar.DAY_OF_MONTH))
     }
     private fun choosePersianDate(a:Activity,initial:Long,onPick:(Long)->Unit) {
-        val p=PersianCalendar().apply{timeInMillis=if(initial>0)initial else System.currentTimeMillis()}
+        val p=IcuCalendar.getInstance(ULocale("@calendar=persian")).apply{timeInMillis=if(initial>0)initial else System.currentTimeMillis()}
         val row=LinearLayout(a).apply{
             orientation=LinearLayout.HORIZONTAL;layoutDirection=View.LAYOUT_DIRECTION_RTL
             setPadding(dp(a,12),dp(a,10),dp(a,12),dp(a,10))
@@ -235,7 +235,7 @@ object AlarmUi {
         val month=NumberPicker(a).apply{minValue=1;maxValue=12;value=p.get(IcuCalendar.MONTH)+1}
         val day=NumberPicker(a).apply{minValue=1;maxValue=31;value=p.get(IcuCalendar.DAY_OF_MONTH)}
         fun refresh(){
-            val probe=PersianCalendar().apply{
+            val probe=IcuCalendar.getInstance(ULocale("@calendar=persian")).apply{
                 set(IcuCalendar.YEAR,year.value);set(IcuCalendar.MONTH,month.value-1)
                 set(IcuCalendar.DAY_OF_MONTH,1)
             }
@@ -247,7 +247,7 @@ object AlarmUi {
         for(picker in listOf(day,month,year))row.addView(picker,LinearLayout.LayoutParams(0,-2,1f))
         AlertDialog.Builder(a).setTitle("انتخاب تاریخ شمسی").setView(row)
             .setNegativeButton("انصراف",null).setPositiveButton("تأیید"){_,_->
-                val chosen=PersianCalendar().apply{
+                val chosen=IcuCalendar.getInstance(ULocale("@calendar=persian")).apply{
                     clear();set(IcuCalendar.YEAR,year.value);set(IcuCalendar.MONTH,month.value-1)
                     set(IcuCalendar.DAY_OF_MONTH,day.value)
                     set(IcuCalendar.HOUR_OF_DAY,12)
