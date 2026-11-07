@@ -8,7 +8,7 @@ import android.provider.Settings
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.*
-import android.icu.util.PersianCalendar
+import android.icu.util.ULocale
 import android.icu.util.Calendar as IcuCalendar
 import java.util.UUID
 import java.util.TimeZone
@@ -146,7 +146,7 @@ object AlarmScheduler {
             .atZone(zone).toLocalDate() else today
         val end=if(item.endDate>0) Instant.ofEpochMilli(item.endDate)
             .atZone(zone).toLocalDate() else null
-        val anchorPersian=PersianCalendar().apply {
+        val anchorPersian=IcuCalendar.getInstance(ULocale("@calendar=persian")).apply {
             timeInMillis=anchor.atStartOfDay(zone).toInstant().toEpochMilli()
         }
         val anchorDay=anchorPersian.get(IcuCalendar.DAY_OF_MONTH)
@@ -169,7 +169,7 @@ object AlarmScheduler {
                     2 -> item.days and (1 shl dow)!=0
                     3 -> java.time.temporal.ChronoUnit.DAYS.between(anchor,date)%7L==0L
                     4,5 -> {
-                        val pc=PersianCalendar().apply {
+                        val pc=IcuCalendar.getInstance(ULocale("@calendar=persian")).apply {
                             timeInMillis=date.atStartOfDay(zone).toInstant().toEpochMilli()
                         }
                         val year=pc.get(IcuCalendar.YEAR)
