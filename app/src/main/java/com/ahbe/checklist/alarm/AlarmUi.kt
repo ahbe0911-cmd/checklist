@@ -55,11 +55,14 @@ object AlarmUi {
         setColor(color);cornerRadius=dp(c,r).toFloat()
         if(stroke!=null)setStroke(dp(c,1),stroke)
     }
+    private fun vazir(c:Context,bold:Boolean=false):Typeface = runCatching {
+        Typeface.createFromAsset(c.assets,"fonts/far_vazir.ttf")
+    }.getOrDefault(if(bold)Typeface.DEFAULT_BOLD else Typeface.DEFAULT)
     private fun txt(c:Context,value:String,size:Float=15f,color:Int=navy,bold:Boolean=false)=
         TextView(c).apply{
             text=value;textSize=size;setTextColor(color)
             gravity=Gravity.CENTER_VERTICAL or Gravity.RIGHT
-            typeface=if(bold)Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            typeface=vazir(c,bold)
             setPadding(dp(c,3),dp(c,5),dp(c,3),dp(c,5))
         }
     private fun button(c:Context,value:String,action:()->Unit)=txt(c,value,14f,blue,true).apply {
@@ -259,7 +262,7 @@ object AlarmUi {
         val outer=ScrollView(a).apply{addView(layout)}
         val title=EditText(a).apply {
             setText(copy.title);hint="عنوان آلارم"
-            setSingleLine(true);textSize=17f
+            setSingleLine(true);textSize=17f;typeface=vazir(a)
         }
         layout.addView(txt(a,"نام آلارم",14f,navy,true))
         layout.addView(title)
@@ -275,7 +278,7 @@ object AlarmUi {
             layout.addView(time,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,8)})
             val repeat=Spinner(a)
             val options=arrayOf("فقط یک‌بار","هر روز","روزهای انتخابی","هفتگی","ماهانه شمسی","سالانه شمسی")
-            repeat.adapter=ArrayAdapter(a,android.R.layout.simple_spinner_dropdown_item,options)
+            repeat.adapter=ArrayAdapter<String>(a,android.R.layout.simple_spinner_dropdown_item,options).apply{setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)}
             repeat.setSelection(copy.repeat)
             layout.addView(txt(a,"نوع تکرار",14f,navy,true));layout.addView(repeat)
             lateinit var dateButton:TextView
@@ -297,7 +300,7 @@ object AlarmUi {
             layout.addView(endButton)
             layout.addView(button(a,"حذف تاریخ پایان"){copy.endDate=0;endButton.text="تاریخ پایان: نامحدود"})
             val count=EditText(a).apply{
-                hint="تعداد دفعات (خالی = نامحدود)"
+                hint="تعداد دفعات (خالی = نامحدود)";typeface=vazir(a)
                 inputType=android.text.InputType.TYPE_CLASS_NUMBER
                 setText(if(copy.maxOccurrences>0)copy.maxOccurrences.toString() else "")
             }
@@ -305,7 +308,7 @@ object AlarmUi {
             layout.addView(count)
             countInput=count
             val lastDay=CheckBox(a).apply{
-                text="در ماه کوتاه‌تر، آخرین روز ماه انتخاب شود"
+                text="در ماه کوتاه‌تر، آخرین روز ماه انتخاب شود";typeface=vazir(a)
                 isChecked=copy.missingDayLast
             }
             layout.addView(lastDay)
@@ -326,7 +329,7 @@ object AlarmUi {
             }
             layout.addView(offset)
             val custom=EditText(a).apply{
-                hint="دقیقه دلخواه";inputType=android.text.InputType.TYPE_CLASS_NUMBER or
+                hint="دقیقه دلخواه";typeface=vazir(a);inputType=android.text.InputType.TYPE_CLASS_NUMBER or
                     android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
                 setText(copy.offset.toString())
             }
@@ -346,7 +349,7 @@ object AlarmUi {
         layout.addView(dayRow)
         days.forEachIndexed{idx,d->
             val cb=CheckBox(a).apply {
-                text=d;buttonTintList=ColorStateList.valueOf(blue)
+                text=d;typeface=vazir(a);buttonTintList=ColorStateList.valueOf(blue)
                 isChecked=copy.days and (1 shl idx)!=0
                 setPadding(0,0,0,0)
             }
@@ -359,8 +362,8 @@ object AlarmUi {
         layout.addView(button(a,"انتخاب و پیش‌شنیدن صدا"){
             soundPicker(a){sound->copy.sound=sound;soundName.text=AlarmSounds.label(sound)}
         })
-        val vibrate=CheckBox(a).apply{text="لرزش";isChecked=copy.vibrate}
-        val gradual=CheckBox(a).apply{text="افزایش تدریجی صدا";isChecked=copy.gradual}
+        val vibrate=CheckBox(a).apply{text="لرزش";typeface=vazir(a);isChecked=copy.vibrate}
+        val gradual=CheckBox(a).apply{text="افزایش تدریجی صدا";typeface=vazir(a);isChecked=copy.gradual}
         layout.addView(vibrate);layout.addView(gradual)
         val snoozeOptions=listOf("۵ دقیقه","۱۰ دقیقه","۱۵ دقیقه")
         val snooze=Spinner(a).apply{
