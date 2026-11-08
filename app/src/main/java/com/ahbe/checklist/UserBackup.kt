@@ -2,8 +2,6 @@ package com.ahbe.checklist
 
 import android.content.Context
 import android.net.Uri
-import com.ahbe.checklist.alarm.AlarmStore
-import com.ahbe.checklist.alarm.AlarmScheduler
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -19,21 +17,33 @@ object UserBackup {
 
     fun export(c:Context, uri:Uri) {
         val prefNames = prefsDir(c).listFiles()?.filter { it.isFile && it.extension=="xml" }
-            ?.map { it.name.removeSuffix(".xml") } ?: emptyList()
+            ?.map { it.name.removeSuffix(".xml") }
+            ?.filterNot { it == "independent_alarm_settings_v1" } ?: emptyList()
         val preferences=JSONObject()
         for(name in prefNames) {
             val entries=JSONObject()
             for((key,value) in c.getSharedPreferences(name,Context.MODE_PRIVATE).all) {
                 val item=JSONObject()
-                when(value) {
-                    is String -> {item.put("type","string");item.put("value",value)}
-                    is Boolean -> {item.put("type","boolean");item.put("value",value)}
-                    is Int -> {item.put("type","int");item.put("value",value)}
-                    is Long -> {item.put("type","long");item.put("value",value)}
-                    is Float -> {item.put("type","float");item.put("value",value.toDouble())}
+                val cleanedValue = if (name=="checklist_native" &&
+                    key=="optimized_notes" && value is String) {
+                    runCatching {
+                        val notes=JSONArray(value)
+                        for(i in 0 until notes.length()) {
+                            notes.getJSONObject(i).remove("reminderAt")
+                            notes.getJSONObject(i).remove("calendarEventId")
+                        }
+                        notes.toString()
+                    }.getOrDefault(value)
+                } else value
+                when(cleanedValue) {
+                    is String -> {item.put("type","string");item.put("value",cleanedValue)}
+                    is Boolean -> {item.put("type","boolean");item.put("value",cleanedValue)}
+                    is Int -> {item.put("type","int");item.put("value",cleanedValue)}
+                    is Long -> {item.put("type","long");item.put("value",cleanedValue)}
+                    is Float -> {item.put("type","float");item.put("value",cleanedValue.toDouble())}
                     is Set<*> -> {
                         item.put("type","strings")
-                        item.put("value",JSONArray(value.filterIsInstance<String>()))
+                        item.put("value",JSONArray(cleanedValue.filterIsInstance<String>()))
                     }
                     else -> continue
                 }
@@ -44,7 +54,7 @@ object UserBackup {
         val files=mutableListOf<Pair<String,File>>()
         fun collect(dir:File,prefix:String) {
             dir.listFiles()?.forEach { file ->
-                if(file.isDirectory)collect(file,"$prefix${file.name}/")
+                if(file.isDirectory && file.name!="alarm_sounds")collect(file,"$prefix${file.name}/")
                 else if(file.isFile)files.add("$prefix${file.name}" to file)
             }
         }
@@ -111,7 +121,7 @@ object UserBackup {
             require(meta.optString("format")=="checklist-user-backup" &&
                 meta.optInt("version")==VERSION) {"Unsupported backup"}
             val prefs=meta.getJSONObject("preferences")
-            val names=prefs.keys().asSequence().toList()
+            val names=prefs.keys().asSequence().filterNot { it=="independent_alarm_settings_v1" }.toList()
             require(names.all { it.matches(Regex("[A-Za-z0-9_.-]+")) }) {"Invalid preferences"}
             for(name in names) {
                 val entries=prefs.getJSONObject(name)
@@ -121,8 +131,6 @@ object UserBackup {
                         "string","boolean","int","long","float","strings"))
                 }
             }
-            // Preserve the existing alarm schedule until the replacement is validated.
-            AlarmStore.read(c).forEach { AlarmScheduler.cancel(c,it.id) }
             for(name in names) {
                 val entries=prefs.getJSONObject(name)
                 val editor=c.getSharedPreferences(name,Context.MODE_PRIVATE).edit().clear()
@@ -145,6 +153,7 @@ object UserBackup {
                 check(editor.commit()) {"Unable to restore settings"}
             }
             for((name,source) in extracted) {
+                if(name.startsWith("alarm_sounds/"))continue
                 require(name.isNotBlank()) {"Invalid file"}
                 val dest=File(c.filesDir,name)
                 val root=c.filesDir.canonicalPath+File.separator
@@ -152,7 +161,6 @@ object UserBackup {
                 dest.parentFile?.mkdirs()
                 source.copyTo(dest,overwrite=true)
             }
-            AlarmStore.read(c).filter { it.enabled }.forEach { AlarmScheduler.schedule(c,it) }
         } finally {
             staged.deleteRecursively()
         }
