@@ -8,11 +8,22 @@ import android.view.WindowManager
 /** This application contains only the self-contained alarm feature. */
 class MainActivity : Activity() {
     private var settingsVisible = false
+    private var refreshSettingsAfterReturn = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         showHome()
+    }
+
+    fun markSettingsRefresh() { refreshSettingsAfterReturn = true }
+
+    override fun onResume() {
+        super.onResume()
+        if (refreshSettingsAfterReturn && settingsVisible) {
+            refreshSettingsAfterReturn = false
+            showSettings()
+        }
     }
 
     fun showHome() {
