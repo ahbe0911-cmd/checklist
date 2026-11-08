@@ -199,7 +199,7 @@ object AlarmUi {
         content.addView(txt(a,"آلارم‌های معمولی",19f,navy,true).apply{
             setPadding(dp(a,2),dp(a,19),0,dp(a,5))
         })
-        all.filterNot{it.sunrise}.forEach{item->
+        all.filterNot{it.sunrise || it.id==AlarmTestReceiver.ID}.forEach{item->
             val block=card(a,content)
             val hero=LinearLayout(a).apply{
                 orientation=LinearLayout.HORIZONTAL
