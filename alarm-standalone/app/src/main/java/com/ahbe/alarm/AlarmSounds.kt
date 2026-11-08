@@ -122,17 +122,29 @@ class AlarmSoundService:Service() {
             }
         }
     }
+    private var activeAlarmId:String?=null
     private var media:MediaPlayer?=null
     private var vibrator:Vibrator?=null
     private val handler=Handler(Looper.getMainLooper())
     private var fade:Runnable?=null
     override fun onBind(intent:Intent?):IBinder?=null
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
-        if(intent?.action==STOP) {end();return START_NOT_STICKY}
+        if(intent?.action==STOP) {
+            val endingTest = activeAlarmId == AlarmTestReceiver.ID
+            end()
+            if (endingTest) {
+                AlarmStore.save(this, AlarmStore.read(this).filterNot {
+                    it.id == AlarmTestReceiver.ID
+                })
+            }
+            activeAlarmId = null
+            return START_NOT_STICKY
+        }
         if(intent?.action!=START)return START_NOT_STICKY
         val item=AlarmStore.get(this,intent.getStringExtra("alarm_id")?:"")
             ?:return START_NOT_STICKY
         endSound()
+        activeAlarmId = item.id
         val notification=notification(this,item)
         try {
             if(Build.VERSION.SDK_INT>=29)
