@@ -1059,124 +1059,137 @@ class MainActivity : Activity() {
         val tone = accentTones[(index - 1).mod(accentTones.size)]
         val row = FrameLayout(this)
         destination.addView(row, LinearLayout.LayoutParams(-1, -2).apply {
-            bottomMargin = dp(12)
+            bottomMargin = dp(7)
         })
         val bubble = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_RTL
-            minimumWidth = dp(156)
-            setPadding(dp(15), dp(11), dp(15), dp(13))
-            background = shape(bubbleTones[(index - 1).mod(bubbleTones.size)], 21)
-            elevation = dp(2).toFloat()
+            setPadding(dp(12), dp(7), dp(12), dp(7))
+            background = shape(bubbleTones[(index - 1).mod(bubbleTones.size)], 17)
+            elevation = dp(1).toFloat()
             alpha = if (note.completed) 0.82f else 1f
             isClickable = true
             isFocusable = true
             contentDescription = "باز کردن یادداشت: " + note.text
             setOnClickListener { showNotePage(note) }
         }
-        row.addView(bubble, FrameLayout.LayoutParams(-2, -2, Gravity.RIGHT).apply {
-            marginStart = dp(28)
-            marginEnd = dp(3)
+        row.addView(bubble, FrameLayout.LayoutParams(-1, -2, Gravity.RIGHT).apply {
+            marginStart = dp(8)
+            marginEnd = dp(8)
         })
+        val contentRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.TOP
+        }
+        bubble.addView(contentRow, LinearLayout.LayoutParams(-1, -2))
         val identity = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_RTL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(2), 0, 0)
         }
-        bubble.addView(identity)
+        contentRow.addView(identity, LinearLayout.LayoutParams(-2, -2).apply {
+            marginEnd = dp(10)
+        })
         identity.addView(View(this).apply {
             background = shape(tone, 8)
-        }, LinearLayout.LayoutParams(dp(7), dp(7)).apply { marginEnd = dp(7) })
+        }, LinearLayout.LayoutParams(dp(6), dp(6)).apply { marginEnd = dp(5) })
         identity.addView(label(
             if (note.completed) "انجام‌شده" else "یادداشت",
-            11f, tone, true
+            10f, tone, true
         ).apply { typeface = titleFont })
         val body = label(note.text, noteTextSize.toFloat(),
             if (note.completed) muted else ink, false).apply {
             typeface = textFont
-            maxWidth = resources.displayMetrics.widthPixels - dp(105)
             maxLines = Int.MAX_VALUE
             ellipsize = null
             gravity = Gravity.RIGHT or Gravity.TOP
             textDirection = View.TEXT_DIRECTION_FIRST_STRONG
             breakStrategy = android.text.Layout.BREAK_STRATEGY_HIGH_QUALITY
             justificationMode = android.text.Layout.JUSTIFICATION_MODE_INTER_WORD
-            setLineSpacing(dp(3).toFloat(), 1.1f)
-            setPadding(0, dp(7), 0, dp(4))
+            setLineSpacing(dp(1).toFloat(), 1.05f)
+            setPadding(0, 0, 0, 0)
             if (note.completed) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
         }
-        bubble.addView(body)
-        note.dueAt?.let { due ->
-            bubble.addView(label("تاریخ اجرا: " + formatDueDate(due),
-                11f, Color.rgb(192, 57, 87), true).apply {
-                typeface = textFont
-                setPadding(0, dp(2), 0, dp(4))
-            })
-        }
+        contentRow.addView(body, LinearLayout.LayoutParams(0, -2, 1f))
+        // A single compact metadata line instead of multiple stacked rows.
         val descendants = notes.count { it.parentId == note.id }
+        val detailParts = mutableListOf<String>()
+        note.dueAt?.let { due ->
+            detailParts.add("تاریخ اجرا: " + formatDueDate(due))
+        }
         if (descendants > 0 || note.imageFilenames.isNotEmpty() ||
             note.audioAttachments.isNotEmpty()) {
-            bubble.addView(label("زیرشاخه " + fa(descendants) +
-                "  ·  تصویر " + fa(note.imageFilenames.size) +
-                "  ·  صوت " + fa(note.audioAttachments.size), 11f, tone).apply {
-                typeface = textFont
-                setPadding(0, dp(4), 0, dp(2))
-            })
+            detailParts.add("زیرشاخه " + fa(descendants) +
+                " · تصویر " + fa(note.imageFilenames.size) +
+                " · صوت " + fa(note.audioAttachments.size))
         }
+        if (note.audioFilename != null) detailParts.add("پیام صوتی")
         if (note.audioFilename != null) {
-            bubble.addView(label("پیام صوتی", 11f, tone, true).apply {
-                typeface = titleFont
-                setPadding(0, dp(4), 0, dp(6))
-            })
             val preview = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 layoutDirection = View.LAYOUT_DIRECTION_RTL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(6), dp(5), dp(6), dp(5))
-                background = shape(Color.argb(175, 255, 255, 255), 14)
+                setPadding(dp(6), dp(3), dp(6), dp(3))
+                background = shape(Color.argb(175, 255, 255, 255), 13)
             }
             bubble.addView(preview, LinearLayout.LayoutParams(-1, -2))
             preview.addView(ImageButton(this).apply {
                 setImageResource(if (playingNoteId == note.id)
                     R.drawable.ic_pause_voice else R.drawable.ic_play_voice)
                 imageTintList = ColorStateList.valueOf(tone)
-                background = shape(Color.WHITE, 18)
+                background = shape(Color.WHITE, 14)
                 contentDescription = "پخش یا توقف پیام صوتی"
                 setPadding(dp(8), dp(8), dp(8), dp(8))
                 setOnClickListener { toggleVoicePlayback(note) }
-            }, LinearLayout.LayoutParams(dp(38), dp(38)))
+            }, LinearLayout.LayoutParams(dp(36), dp(36)))
             preview.addView(label(formatDuration(note.audioDurationMs), 12f, muted),
-                LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(12) })
+                LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(10) })
             bubble.addView(voiceActionBar(note.audioFilename),
-                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         }
+        // The action buttons share one footer with any available metadata.
+        val footer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(3), 0, 0)
+        }
+        bubble.addView(footer, LinearLayout.LayoutParams(-1, -2))
+        footer.addView(label(detailParts.joinToString("  ·  "), 10f, muted).apply {
+            typeface = textFont
+            maxLines = 2
+            gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
+            setPadding(0, 0, dp(4), 0)
+            visibility = if (detailParts.isEmpty()) View.INVISIBLE else View.VISIBLE
+        }, LinearLayout.LayoutParams(0, -2, 1f))
         val controls = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_RTL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(9), 0, 0)
         }
-        bubble.addView(controls)
+        footer.addView(controls, LinearLayout.LayoutParams(-2, -2))
         val complete = ImageButton(this).apply {
             setImageResource(R.drawable.ic_check)
             imageTintList = ColorStateList.valueOf(if (note.completed)
                 Color.WHITE else tone)
-            background = shape(if (note.completed) emerald else Color.WHITE, 15)
+            background = shape(if (note.completed) emerald else Color.WHITE, 13)
             setPadding(dp(9), dp(9), dp(9), dp(9))
             contentDescription = if (note.completed) "بازگرداندن یادداشت" else "علامت انجام"
             setOnClickListener { toggleCompleted(note) }
         }
         controls.addView(complete, LinearLayout.LayoutParams(dp(38), dp(38)))
-        controls.addView(label("مشاهده جزئیات", 11f, tone).apply {
+        controls.addView(label("جزئیات", 11f, tone, true).apply {
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), 0, dp(12), 0)
+            setPadding(dp(9), 0, dp(9), 0)
             isClickable = true
             setOnClickListener { showNotePage(note) }
-        }, LinearLayout.LayoutParams(0, dp(38), 1f))
+        }, LinearLayout.LayoutParams(-2, dp(38)))
         controls.addView(ImageButton(this).apply {
             setImageResource(R.drawable.ic_trash)
             imageTintList = ColorStateList.valueOf(Color.rgb(163, 75, 106))
-            background = shape(Color.argb(180, 255, 255, 255), 15)
+            background = shape(Color.argb(180, 255, 255, 255), 13)
             setPadding(dp(9), dp(9), dp(9), dp(9))
             contentDescription = "حذف یادداشت " + note.text
             setOnClickListener {
@@ -1197,9 +1210,9 @@ class MainActivity : Activity() {
         if (lastInsertedNoteId == note.id) {
             lastInsertedNoteId = null
             row.alpha = 0f
-            row.translationY = dp(28).toFloat()
+            row.translationY = dp(18).toFloat()
             row.post {
-                row.animate().alpha(1f).translationY(0f).setDuration(300L)
+                row.animate().alpha(1f).translationY(0f).setDuration(260L)
                     .setInterpolator(android.view.animation.DecelerateInterpolator())
                     .start()
             }
