@@ -128,6 +128,73 @@ object AlarmUi {
         })
         return block
     }
+
+    private fun headingFont(c:Context):Typeface = runCatching {
+        Typeface.createFromAsset(c.assets,"fonts/Far_TitrBd.ttf")
+    }.getOrElse{vazir(c,true)}
+    private fun locationFont(c:Context):Typeface = runCatching {
+        Typeface.createFromAsset(c.assets,"fonts/A_Rooznameh.ttf")
+    }.getOrElse{vazir(c,true)}
+    private fun softInput(c:Context,value:String="",placeholder:String="")=EditText(c).apply{
+        setText(value);hint=placeholder
+        typeface=vazir(c)
+        textSize=15f;setTextColor(navy);setHintTextColor(muted)
+        background=shape(c,Color.rgb(243,244,246),14)
+        setSingleLine(true);minHeight=dp(c,54)
+        setPadding(dp(c,15),dp(c,12),dp(c,15),dp(c,12))
+        gravity=Gravity.CENTER_VERTICAL or Gravity.RIGHT
+    }
+    private fun group(c:Context,parent:LinearLayout,name:String):LinearLayout{
+        val pane=container(c).apply{
+            setPadding(dp(c,14),dp(c,13),dp(c,14),dp(c,14))
+            background=shape(c,Color.rgb(249,250,252),18)
+        }
+        parent.addView(pane,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(c,14)})
+        pane.addView(txt(c,name,16f,navy,true))
+        return pane
+    }
+    private fun label(c:Context,value:String)=txt(c,value,12f,muted).apply{
+        setPadding(dp(c,1),dp(c,12),dp(c,1),dp(c,7))
+    }
+    private fun dropdown(c:Context,values:Array<String>,selected:Int)=Spinner(c).apply{
+        adapter=ArrayAdapter<String>(c,android.R.layout.simple_spinner_dropdown_item,values)
+            .apply{setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)}
+        background=shape(c,Color.rgb(243,244,246),14)
+        setPadding(dp(c,12),0,dp(c,12),0)
+        minimumHeight=dp(c,54)
+        setSelection(selected.coerceIn(0,values.size-1))
+    }
+    private fun pillDay(c:Context,letter:String,active:Boolean):CheckBox=CheckBox(c).apply{
+        text=letter;textSize=14f;typeface=vazir(c,true)
+        gravity=Gravity.CENTER
+        setButtonDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+        setPadding(0,0,0,0)
+        minWidth=0;minimumHeight=dp(c,44)
+        isChecked=active
+        fun repaint(){
+            val oval=GradientDrawable().apply{
+                shape=GradientDrawable.OVAL
+                setColor(if(isChecked)blue else Color.rgb(232,235,243))
+            }
+            background=oval
+            setTextColor(if(isChecked)Color.WHITE else navy)
+        }
+        setOnCheckedChangeListener{_,_->repaint()}
+        repaint()
+    }
+    private fun showPremiumDialog(a:Activity,root:LinearLayout,heightRatio:Float):Dialog{
+        val dialog=Dialog(a)
+        dialog.setContentView(root)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.show()
+        dialog.window?.apply{
+            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            attributes=attributes.apply{dimAmount=0.55f;gravity=Gravity.CENTER}
+            setLayout((a.resources.displayMetrics.widthPixels*0.94f).toInt(),
+                (a.resources.displayMetrics.heightPixels*heightRatio).toInt())
+        }
+        return dialog
+    }
     private fun stopPreview(){runCatching{preview?.stop()};runCatching{preview?.release()};preview=null}
     fun show(a:Activity) {
         stopPreview()
@@ -315,141 +382,190 @@ object AlarmUi {
                 onPick(local.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
             }.show()
     }
-    private fun edit(a:Activity,item:AlarmItem,sunrise:Boolean) {
+    private fun edit(a:Activity,item:AlarmItem,sunrise:Boolean){
         val copy=AlarmItem.from(item.toJson())
-        val layout=container(a).apply{setPadding(dp(a,18),dp(a,12),dp(a,18),dp(a,8))}
-        val outer=ScrollView(a).apply{addView(layout)}
-        val title=EditText(a).apply {
-            setText(copy.title);hint="عنوان آلارم"
-            setSingleLine(true);textSize=17f;typeface=vazir(a)
+        val root=container(a).apply{
+            setBackgroundColor(Color.WHITE)
+            setPadding(dp(a,19),dp(a,18),dp(a,19),dp(a,14))
         }
-        layout.addView(txt(a,"نام آلارم",14f,navy,true))
-        layout.addView(title)
-        if(!sunrise) {
-            val time=button(a,"ساعت: %02d:%02d".format(copy.hour,copy.minute)){
+        root.addView(txt(a,if(sunrise)"تنظیم آلارم طلوع" else "افزودن و ویرایش آلارم",
+            24f,navy,true).apply{typeface=headingFont(a)})
+        root.addView(txt(a,"زمان و جزئیات زنگ را مطابق برنامه خود تنظیم کنید.",13f,muted))
+        val outer=ScrollView(a).apply{
+            isVerticalScrollBarEnabled=false
+            fillViewport=false
+        }
+        root.addView(outer,LinearLayout.LayoutParams(-1,0,1f).apply{topMargin=dp(a,12)})
+        val layout=container(a).apply{setPadding(0,0,0,dp(a,18))}
+        outer.addView(layout)
+        val basics=group(a,layout,"اطلاعات آلارم")
+        basics.addView(label(a,"نام آلارم"))
+        val title=softInput(a,copy.title,"عنوان آلارم")
+        basics.addView(title)
+        var repeat:Spinner?=null
+        var count:EditText?=null
+        var lastDay:Switch?=null
+        var offsetSpinner:Spinner?=null
+        var offsetInput:EditText?=null
+        if(!sunrise){
+            basics.addView(label(a,"زمان زنگ"))
+            val clock=primaryButton(a,"%02d:%02d".format(copy.hour,copy.minute)){}
+                .apply{textSize=24f;typeface=vazir(a,true);textDirection=View.TEXT_DIRECTION_LTR}
+            clock.setOnClickListener{
                 TimePickerDialog(a,{_,h,m->
                     copy.hour=h;copy.minute=m
-                    // This button is regenerated by rebuilding its own label.
-                    clockButton?.text="ساعت: %02d:%02d".format(h,m)
+                    clock.text="%02d:%02d".format(h,m)
                 },copy.hour,copy.minute,true).show()
             }
-            clockButton=time
-            layout.addView(time,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,8)})
-            val repeat=Spinner(a)
-            val options=arrayOf("فقط یک‌بار","هر روز","روزهای انتخابی","هفتگی","ماهانه شمسی","سالانه شمسی")
-            repeat.adapter=ArrayAdapter<String>(a,android.R.layout.simple_spinner_dropdown_item,options).apply{setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)}
-            repeat.setSelection(copy.repeat)
-            layout.addView(txt(a,"نوع تکرار",14f,navy,true));layout.addView(repeat)
-            lateinit var dateButton:TextView
-            dateButton=button(a,"تاریخ شروع: "+persianDate(a,if(copy.startDate>0)copy.startDate else System.currentTimeMillis())){
-                choosePersianDate(a,copy.startDate){selected->
-                    copy.startDate=selected
-                    dateButtonRef?.text="تاریخ شروع: "+persianDate(a,selected)
-                }
-            }
-            dateButtonRef=dateButton
-            layout.addView(dateButton)
-            val endButton=button(a,if(copy.endDate>0)"تاریخ پایان: "+persianDate(a,copy.endDate) else "تاریخ پایان: نامحدود"){
-                choosePersianDate(a,copy.endDate){selected->
-                    copy.endDate=selected
-                    endButtonRef?.text="تاریخ پایان: "+persianDate(a,selected)
-                }
-            }
-            endButtonRef=endButton
-            layout.addView(endButton)
-            layout.addView(button(a,"حذف تاریخ پایان"){copy.endDate=0;endButton.text="تاریخ پایان: نامحدود"})
-            val count=EditText(a).apply{
-                hint="تعداد دفعات (خالی = نامحدود)";typeface=vazir(a)
-                inputType=android.text.InputType.TYPE_CLASS_NUMBER
-                setText(if(copy.maxOccurrences>0)copy.maxOccurrences.toString() else "")
-            }
-            layout.addView(txt(a,"تعداد تکرار",13f,muted))
-            layout.addView(count)
-            countInput=count
-            val lastDay=CheckBox(a).apply{
-                text="در ماه کوتاه‌تر، آخرین روز ماه انتخاب شود";typeface=vazir(a)
-                isChecked=copy.missingDayLast
-            }
-            layout.addView(lastDay)
-            lastDayInput=lastDay
+            basics.addView(clock)
+            val dates=group(a,layout,"تاریخ و تکرار")
+            dates.addView(label(a,"نوع تکرار"))
+            val options=arrayOf("فقط یک‌بار","هر روز","روزهای انتخابی","هفتگی",
+                "ماهانه شمسی","سالانه شمسی")
+            repeat=dropdown(a,options,copy.repeat)
+            dates.addView(repeat)
             repeat.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
                 override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,pos:Int,id:Long){
                     copy.repeat=pos
                 }
                 override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
             }
-        }else {
-            layout.addView(txt(a,"فاصله نسبت به طلوع (دقیقه قبل)",14f,navy,true))
-            val offsetOptions=listOf(0,5,10,15,20,30,45,60)
-            val opts=offsetOptions.map {if(it==0)"هم‌زمان با طلوع" else "$it دقیقه قبل"}+"زمان دلخواه"
-            val offset=Spinner(a).apply {
-                adapter=ArrayAdapter(a,android.R.layout.simple_spinner_dropdown_item,opts)
-                setSelection(offsetOptions.indexOf(copy.offset).takeIf{it>=0}?:8)
-            }
-            layout.addView(offset)
-            val custom=EditText(a).apply{
-                hint="دقیقه دلخواه";typeface=vazir(a);inputType=android.text.InputType.TYPE_CLASS_NUMBER or
-                    android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
-                setText(copy.offset.toString())
-            }
-            layout.addView(custom)
-            offset.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
-                override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,pos:Int,id:Long){
-                    custom.visibility=if(pos==8)View.VISIBLE else View.GONE
+            dates.addView(label(a,"تاریخ شروع"))
+            val dateButton=button(a,"تاریخ شروع: "+
+                persianDate(a,if(copy.startDate>0)copy.startDate else System.currentTimeMillis())){}
+            dateButton.setOnClickListener{
+                choosePersianDate(a,copy.startDate){selected->
+                    copy.startDate=selected
+                    dateButton.text="تاریخ شروع: "+persianDate(a,selected)
                 }
-                override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
             }
-            // Save action below validates offset.
-            custom.tag=offset
+            dates.addView(dateButton)
+            dates.addView(label(a,"تاریخ پایان"))
+            val endButton=button(a,if(copy.endDate>0)"تاریخ پایان: "+
+                persianDate(a,copy.endDate) else "تاریخ پایان: نامحدود"){}
+            endButton.setOnClickListener{
+                choosePersianDate(a,copy.endDate){selected->
+                    copy.endDate=selected
+                    endButton.text="تاریخ پایان: "+persianDate(a,selected)
+                }
+            }
+            dates.addView(endButton)
+            dates.addView(button(a,"حذف تاریخ پایان"){
+                copy.endDate=0
+                endButton.text="تاریخ پایان: نامحدود"
+            },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,8)})
+            dates.addView(label(a,"تعداد تکرار"))
+            count=softInput(a,if(copy.maxOccurrences>0)copy.maxOccurrences.toString() else "",
+                "خالی = نامحدود").apply{
+                inputType=android.text.InputType.TYPE_CLASS_NUMBER
+            }
+            dates.addView(count)
+            lastDay=Switch(a).apply{
+                text="در ماه کوتاه‌تر، آخرین روز ماه انتخاب شود"
+                textSize=13f;typeface=vazir(a)
+                isChecked=copy.missingDayLast
+                setPadding(dp(a,3),dp(a,13),dp(a,3),dp(a,6))
+            }
+            dates.addView(lastDay)
+        }else{
+            val solar=group(a,layout,"زمان‌بندی طلوع آفتاب")
+            solar.addView(label(a,"فاصله نسبت به طلوع (دقیقه قبل)"))
+            val offsets=listOf(0,5,10,15,20,30,45,60)
+            val opts=(offsets.map{if(it==0)"هم‌زمان با طلوع" else "$it دقیقه قبل"}+
+                "زمان دلخواه").toTypedArray()
+            offsetSpinner=dropdown(a,opts,offsets.indexOf(copy.offset).takeIf{it>=0}?:8)
+            solar.addView(offsetSpinner)
+            offsetInput=softInput(a,copy.offset.toString(),"دقیقه دلخواه").apply{
+                inputType=android.text.InputType.TYPE_CLASS_NUMBER or
+                    android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
+                visibility=if(offsetSpinner.selectedItemPosition==8)View.VISIBLE else View.GONE
+            }
+            solar.addView(offsetInput,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,8)})
+            val field=offsetInput
+            offsetSpinner.onItemSelectedListener=
+                object:android.widget.AdapterView.OnItemSelectedListener{
+                    override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,
+                        pos:Int,id:Long){
+                        field.visibility=if(pos==8)View.VISIBLE else View.GONE
+                    }
+                    override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
+                }
         }
-        layout.addView(txt(a,"روزهای هفته",14f,navy,true).apply{setPadding(0,dp(a,15),0,dp(a,5))})
+        val daysSection=group(a,layout,"روزهای هفته")
+        daysSection.addView(txt(a,"روزهای فعال را انتخاب کنید",12f,muted))
         val checks=mutableListOf<CheckBox>()
-        val dayRow=LinearLayout(a).apply{orientation=LinearLayout.HORIZONTAL}
-        layout.addView(dayRow)
-        days.forEachIndexed{idx,d->
-            val cb=CheckBox(a).apply {
-                text=d;typeface=vazir(a);buttonTintList=ColorStateList.valueOf(blue)
-                isChecked=copy.days and (1 shl idx)!=0
-                setPadding(0,0,0,0)
-            }
-            checks.add(cb)
-            dayRow.addView(cb,LinearLayout.LayoutParams(0,dp(a,45),1f))
+        val dayRow=LinearLayout(a).apply{
+            orientation=LinearLayout.HORIZONTAL
+            layoutDirection=View.LAYOUT_DIRECTION_RTL
+            gravity=Gravity.CENTER_VERTICAL
         }
-        layout.addView(txt(a,"صدای زنگ",14f,navy,true).apply{setPadding(0,dp(a,12),0,0)})
-        val soundName=txt(a,AlarmSounds.label(copy.sound),14f,muted)
-        layout.addView(soundName)
-        layout.addView(button(a,"انتخاب و پیش‌شنیدن صدا"){
-            soundPicker(a){sound->copy.sound=sound;soundName.text=AlarmSounds.label(sound)}
+        daysSection.addView(dayRow,LinearLayout.LayoutParams(-1,dp(a,48)).apply{
+            topMargin=dp(a,10)
         })
-        val vibrate=CheckBox(a).apply{text="لرزش";typeface=vazir(a);isChecked=copy.vibrate}
-        val gradual=CheckBox(a).apply{text="افزایش تدریجی صدا";typeface=vazir(a);isChecked=copy.gradual}
-        layout.addView(vibrate);layout.addView(gradual)
-        val snoozeOptions=listOf("۵ دقیقه","۱۰ دقیقه","۱۵ دقیقه")
-        val snooze=Spinner(a).apply{
-            adapter=ArrayAdapter(a,android.R.layout.simple_spinner_dropdown_item,snoozeOptions)
-            setSelection(when(copy.snooze){5->0;15->2;else->1})
+        days.forEachIndexed{idx,d->
+            val day=pillDay(a,d,copy.days and (1 shl idx)!=0)
+            checks.add(day)
+            dayRow.addView(day,LinearLayout.LayoutParams(0,dp(a,44),1f).apply{
+                marginStart=dp(a,2);marginEnd=dp(a,2)
+            })
         }
-        layout.addView(txt(a,"تعویق پیش‌فرض",13f,muted));layout.addView(snooze)
-        val editor=AlertDialog.Builder(a).setTitle(if(sunrise)"آلارم طلوع" else "تنظیم آلارم")
-            .setView(outer).setNegativeButton("انصراف",null)
-            .setPositiveButton("ذخیره",null).create()
-        editor.setOnDismissListener{stopPreview()}
-        editor.show()
-        editor.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener{
-            copy.title=title.text.toString().trim().ifBlank{if(sunrise)"آلارم طلوع آفتاب" else "آلارم"}
+        val sound=group(a,layout,"صدا و هشدار")
+        sound.addView(label(a,"صدای زنگ"))
+        val soundName=txt(a,AlarmSounds.label(copy.sound),15f,navy,true)
+        sound.addView(soundName)
+        sound.addView(button(a,"انتخاب و پیش‌شنیدن صدا"){
+            soundPicker(a){selected->
+                copy.sound=selected
+                soundName.text=AlarmSounds.label(selected)
+            }
+        },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,9)})
+        val vibrate=Switch(a).apply{
+            text="لرزش";textSize=15f;typeface=vazir(a);isChecked=copy.vibrate
+            setPadding(0,dp(a,13),0,dp(a,10))
+        }
+        val gradual=Switch(a).apply{
+            text="افزایش تدریجی صدا";textSize=15f;typeface=vazir(a)
+            isChecked=copy.gradual
+            setPadding(0,dp(a,7),0,dp(a,8))
+        }
+        sound.addView(vibrate);sound.addView(gradual)
+        sound.addView(label(a,"تعویق پیش‌فرض"))
+        val snooze=dropdown(a,arrayOf("۵ دقیقه","۱۰ دقیقه","۱۵ دقیقه"),
+            when(copy.snooze){5->0;15->2;else->1})
+        sound.addView(snooze)
+        val actions=LinearLayout(a).apply{
+            orientation=LinearLayout.HORIZONTAL
+            layoutDirection=View.LAYOUT_DIRECTION_RTL
+            gravity=Gravity.CENTER_VERTICAL
+            setPadding(0,dp(a,14),0,dp(a,2))
+        }
+        root.addView(actions)
+        val save=primaryButton(a,"ذخیره آلارم"){}
+        actions.addView(save,LinearLayout.LayoutParams(0,-2,2f))
+        val cancel=txt(a,"انصراف",15f,muted,true).apply{
+            gravity=Gravity.CENTER
+            minHeight=dp(a,52)
+            isClickable=true
+        }
+        actions.addView(cancel,LinearLayout.LayoutParams(0,-2,1f).apply{
+            marginStart=dp(a,8)
+        })
+        val dialog=showPremiumDialog(a,root,0.87f)
+        dialog.setOnDismissListener{stopPreview()}
+        cancel.setOnClickListener{dialog.dismiss()}
+        save.setOnClickListener{
+            copy.title=title.text.toString().trim()
+                .ifBlank{if(sunrise)"آلارم طلوع آفتاب" else "آلارم"}
             copy.days=0
-            checks.forEachIndexed{idx,box->if(box.isChecked)copy.days=copy.days or (1 shl idx)}
-            if(sunrise) {
-                val offsetSpinner=layout.getChildAt(
-                    (0 until layout.childCount).firstOrNull {i->
-                        layout.getChildAt(i) is EditText && layout.getChildAt(i).tag is Spinner
-                    }?:-1
-                ) as? EditText
-                val spin=offsetSpinner?.tag as? Spinner
-                val preset=listOf(0,5,10,15,20,30,45,60)
+            checks.forEachIndexed{idx,box->
+                if(box.isChecked)copy.days=copy.days or (1 shl idx)
+            }
+            if(sunrise){
+                val spin=offsetSpinner
+                val presets=listOf(0,5,10,15,20,30,45,60)
                 copy.offset=if(spin?.selectedItemPosition==8)
-                    offsetSpinner.text.toString().toIntOrNull()?.coerceIn(-1440,1440)?:15
-                else preset.getOrElse(spin?.selectedItemPosition?:3){15}
+                    offsetInput?.text.toString().toIntOrNull()?.coerceIn(-1440,1440)?:15
+                else presets.getOrElse(spin?.selectedItemPosition?:3){15}
             }
             if((sunrise || copy.repeat==2) && copy.days==0){
                 Toast.makeText(a,"حداقل یک روز هفته را انتخاب کن",Toast.LENGTH_LONG).show()
@@ -462,27 +578,22 @@ object AlarmUi {
                     Toast.makeText(a,"تاریخ پایان نباید قبل از شروع باشد",Toast.LENGTH_LONG).show()
                     return@setOnClickListener
                 }
-                copy.maxOccurrences=countInput?.text?.toString()?.toIntOrNull()?.coerceAtLeast(0)?:0
-                copy.missingDayLast=lastDayInput?.isChecked?:true
+                copy.maxOccurrences=count?.text?.toString()?.toIntOrNull()?.coerceAtLeast(0)?:0
+                copy.missingDayLast=lastDay?.isChecked?:true
                 if(copy.repeat==0)copy.maxOccurrences=1
                 if(copy.next>0)copy.firedCount=0
             }
             copy.vibrate=vibrate.isChecked;copy.gradual=gradual.isChecked
             copy.snooze=listOf(5,10,15)[snooze.selectedItemPosition.coerceIn(0,2)]
-            if(sunrise && AlarmStore.location(a)==null) {
+            if(sunrise && AlarmStore.location(a)==null){
                 copy.enabled=false
                 Toast.makeText(a,"برای فعال‌کردن آلارم طلوع، موقعیت را ثبت کنید",
                     Toast.LENGTH_LONG).show()
             }
             AlarmStore.update(a,copy)
-            editor.dismiss();show(a)
+            dialog.dismiss();show(a)
         }
     }
-    private var clockButton:TextView?=null
-    private var dateButtonRef:TextView?=null
-    private var endButtonRef:TextView?=null
-    private var countInput:EditText?=null
-    private var lastDayInput:CheckBox?=null
     private fun soundPicker(a:Activity,onChoose:(String)->Unit){
         stopPreview()
         val layout=container(a).apply{setPadding(dp(a,18),dp(a,5),dp(a,18),dp(a,12))}
