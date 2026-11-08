@@ -70,19 +70,19 @@ class MainActivity : Activity() {
         var dueAt: Long? = null
     )
 
-    private val surface = Color.rgb(244, 247, 246)
-    private val ink = Color.rgb(30, 41, 59)
-    private val muted = Color.rgb(100, 116, 139)
-    private val softBorder = Color.rgb(226, 232, 240)
-    private val indigo = Color.rgb(99, 102, 241)
-    private val emerald = Color.rgb(16, 185, 129)
+    private val surface = Color.rgb(246, 247, 253)
+    private val ink = Color.rgb(28, 31, 63)
+    private val muted = Color.rgb(102, 110, 138)
+    private val softBorder = Color.rgb(229, 232, 246)
+    private val indigo = Color.rgb(89, 76, 239)
+    private val emerald = Color.rgb(5, 185, 163)
     private val palette = intArrayOf(
-        Color.rgb(241, 248, 245),
-        Color.rgb(252, 244, 244),
-        Color.rgb(244, 246, 253),
-        Color.rgb(253, 248, 240),
-        Color.rgb(248, 244, 249),
-        Color.rgb(245, 247, 249)
+        Color.rgb(238, 235, 255),
+        Color.rgb(226, 250, 245),
+        Color.rgb(255, 239, 246),
+        Color.rgb(237, 244, 255),
+        Color.rgb(255, 246, 228),
+        Color.rgb(237, 244, 248)
     )
     private val notes = mutableListOf<Note>()
     private val categories = mutableListOf("کتابخانه", "کافی‌نت", "دانشگاه")
@@ -109,7 +109,7 @@ class MainActivity : Activity() {
     private var search = ""
     private var lastInsertedNoteId: String? = null
     private val titleFont by lazy { loadTypeface("fonts/far_vazir.ttf") }
-    private val textFont by lazy { loadTypeface("fonts/far_nazanin.ttf") }
+    private val textFont by lazy { loadTypeface("fonts/vazirmatn_regular.ttf") }
     private val dateFont by lazy { loadTypeface("fonts/a_rooznameh.ttf") }
 
     // Appearance preferences are kept separately from the user's notes.
@@ -290,7 +290,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         headerTop.addView(heading, LinearLayout.LayoutParams(0, -1, 1f))
-        headingLabel = label("یادداشت‌های من", headerTextSize.toFloat(), ink, true).apply {
+        headingLabel = label("Novi", headerTextSize.toFloat(), ink, true).apply {
             typeface = titleFont
             maxLines = 1
         }
@@ -299,7 +299,7 @@ class MainActivity : Activity() {
         dateLabel = label("", 15f, Color.rgb(58, 77, 114), true).apply {
             typeface = titleFont
             gravity = Gravity.CENTER
-            background = shape(Color.rgb(236, 242, 255), 11, Color.rgb(215, 227, 250))
+            background = shape(Color.rgb(238, 235, 255), 12)
             setPadding(dp(11), dp(4), dp(11), dp(4))
             maxLines = 1
         }
@@ -329,7 +329,7 @@ class MainActivity : Activity() {
         val settingsButton = ImageButton(this).apply {
             setImageResource(R.drawable.ic_settings)
             imageTintList = ColorStateList.valueOf(muted)
-            background = shape(Color.rgb(248, 250, 252), 10, softBorder)
+            background = shape(Color.rgb(240, 239, 253), 13)
             setPadding(dp(10), dp(10), dp(10), dp(10))
             contentDescription = "تنظیمات و مدیریت سربرگ‌ها"
             setOnClickListener { showMainSettings() }
@@ -342,7 +342,7 @@ class MainActivity : Activity() {
             layoutDirection = View.LAYOUT_DIRECTION_RTL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), dp(4), dp(4), dp(4))
-            background = shape(Color.rgb(244, 246, 251), 13)
+            background = shape(Color.rgb(244, 243, 254), 18)
         }
         val categoryScroll = android.widget.HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
@@ -363,11 +363,11 @@ class MainActivity : Activity() {
         })
 
         searchField = EditText(this).apply {
-            hint = "جستجوی یادداشت..."
+            hint = "جست‌وجو در یادداشت‌ها"
             textSize = searchTextSize.toFloat()
             setTextColor(ink)
             setHintTextColor(Color.rgb(148, 163, 184))
-            background = shape(Color.rgb(248, 250, 252), 12, softBorder)
+            background = shape(Color.WHITE, 16)
             setSingleLine(true)
             setPadding(dp(11), 0, dp(11), 0)
             compoundDrawablePadding = dp(6)
@@ -390,7 +390,7 @@ class MainActivity : Activity() {
             isFillViewport = true
             clipToPadding = false
             isVerticalScrollBarEnabled = false
-            setPadding(dp(20), dp(16), dp(20), dp(20))
+            setPadding(dp(16), dp(15), dp(16), dp(22))
         }
         main.addView(scroll, FrameLayout.LayoutParams(-1, -1))
         noteList = LinearLayout(this).apply {
@@ -417,13 +417,7 @@ class MainActivity : Activity() {
         val composerCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_RTL
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.WHITE, Color.rgb(250, 252, 255))
-            ).apply {
-                cornerRadius = dp(24).toFloat()
-                setStroke(dp(1), Color.rgb(225, 232, 241))
-            }
+            background = shape(Color.WHITE, 25)
             elevation = dp(11).toFloat()
             clipToOutline = true
         }
@@ -448,29 +442,31 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(11), dp(10), dp(11), dp(10))
         }
-        composerCard.addView(bottom, LinearLayout.LayoutParams(-1, dp(72)))
+        composerCard.addView(bottom, LinearLayout.LayoutParams(-1, -2).apply { height = -2 })
         composerSpacerStart = View(this).apply { visibility = View.GONE }
         bottom.addView(composerSpacerStart, LinearLayout.LayoutParams(0, dp(1), 1f))
         input = EditText(this).apply {
-            hint = "یک کار جدید بنویس..."
+            hint = "یادداشت جدید..."
             textSize = inputTextSize.toFloat()
             setTextColor(ink)
             setHintTextColor(Color.rgb(148, 163, 184))
-            background = null
-            setSingleLine(true)
+            background = shape(Color.rgb(247, 247, 253), 19)
+            setSingleLine(false)
+            maxLines = 4
+            minimumHeight = dp(48)
             gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
             layoutDirection = View.LAYOUT_DIRECTION_RTL
-            setPadding(dp(11), 0, dp(11), 0)
-            imeOptions = EditorInfo.IME_ACTION_DONE
+            setPadding(dp(14), dp(9), dp(14), dp(9))
+            imeOptions = EditorInfo.IME_ACTION_SEND
             setOnEditorActionListener { _, action, _ ->
-                if (action == EditorInfo.IME_ACTION_DONE) {
+                if (action == EditorInfo.IME_ACTION_SEND) {
                     addNote()
                     true
                 } else false
             }
         }
         input.typeface = textFont
-        bottom.addView(input, LinearLayout.LayoutParams(0, -1, 1f))
+        bottom.addView(input, LinearLayout.LayoutParams(0, -2, 1f))
 
         recordingIndicator = View(this).apply {
             background = shape(Color.rgb(210, 64, 71), 7)
@@ -496,7 +492,7 @@ class MainActivity : Activity() {
         microphoneButton = ImageButton(this).apply {
             setImageResource(R.drawable.ic_microphone)
             imageTintList = ColorStateList.valueOf(muted)
-            background = shape(Color.rgb(242, 246, 250), 24, Color.rgb(225, 232, 240))
+            background = shape(Color.rgb(239, 237, 255), 24)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             setPadding(dp(12), dp(12), dp(12), dp(12))
             contentDescription = "ضبط پیام صوتی"
@@ -509,7 +505,7 @@ class MainActivity : Activity() {
         cancelAudioButton = ImageButton(this).apply {
             setImageResource(R.drawable.ic_close)
             imageTintList = ColorStateList.valueOf(Color.rgb(190, 73, 78))
-            background = shape(Color.rgb(255, 244, 244), 24, Color.rgb(249, 221, 223))
+            background = shape(Color.rgb(255, 237, 240), 24)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             setPadding(dp(12), dp(12), dp(12), dp(12))
             contentDescription = "لغو ضبط صدا"
@@ -523,7 +519,7 @@ class MainActivity : Activity() {
         sendButton = ImageButton(this).apply {
             setImageResource(R.drawable.ic_send_message)
             imageTintList = ColorStateList.valueOf(Color.WHITE)
-            background = shape(ink, 17)
+            background = shape(indigo, 19)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             setPadding(dp(12), dp(12), dp(12), dp(12))
             contentDescription = "افزودن یادداشت"
@@ -568,6 +564,10 @@ class MainActivity : Activity() {
                     persistSelectedCategory()
                     updateCategories()
                     renderNotes()
+                    noteList.animate().cancel()
+                    noteList.translationX = dp(14).toFloat()
+                    noteList.alpha = 0.7f
+                    noteList.animate().translationX(0f).alpha(1f).setDuration(230L).start()
                 }
             }
             val symbol = ImageView(this).apply {
@@ -600,15 +600,12 @@ class MainActivity : Activity() {
             val style = styleForCategory(category)
             val tone = tabColors[style.colorIndex]
             val active = category == selectedCategory
-            tab.background = shape(
-                if (active) Color.argb(40, Color.red(tone), Color.green(tone), Color.blue(tone))
-                else Color.argb(14, Color.red(tone), Color.green(tone), Color.blue(tone)),
-                10, if (active) tone else Color.argb(50, Color.red(tone), Color.green(tone), Color.blue(tone))
-            )
-            tab.alpha = if (active) 1f else 0.86f
-            tab.elevation = if (active) dp(2).toFloat() else 0f
-            (tab.getChildAt(0) as ImageView).imageTintList = ColorStateList.valueOf(tone)
-            (tab.getChildAt(1) as TextView).setTextColor(tone)
+            tab.background = shape(if (active) tone else Color.WHITE, 16)
+            tab.alpha = if (active) 1f else 0.9f
+            tab.elevation = if (active) dp(3).toFloat() else 0f
+            val foreground = if (active) Color.WHITE else tone
+            (tab.getChildAt(0) as ImageView).imageTintList = ColorStateList.valueOf(foreground)
+            (tab.getChildAt(1) as TextView).setTextColor(foreground)
         }
     }
 
@@ -1008,9 +1005,6 @@ class MainActivity : Activity() {
         val missing = mutableListOf<String>()
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
             missing.add(Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
-            missing.add(Manifest.permission.POST_NOTIFICATIONS)
         if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), 915)
     }
 
@@ -2835,7 +2829,7 @@ class MainActivity : Activity() {
         }
 
         addSizeControl(content, "اندازه متن یادداشت‌ها", 12, 24, noteSize) { noteSize = it }
-        addSizeControl(content, "اندازه متن افزودن کار", 12, 22, inputSize) { inputSize = it }
+        addSizeControl(content, "اندازه متن نوشتن یادداشت", 12, 22, inputSize) { inputSize = it }
         addSizeControl(content, "اندازه متن جست‌وجو", 10, 18, searchSize) { searchSize = it }
         addSizeControl(content, "اندازه عنوان برنامه", 18, 30, headerSize) { headerSize = it }
 
