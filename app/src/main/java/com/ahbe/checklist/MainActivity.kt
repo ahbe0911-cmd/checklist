@@ -3,8 +3,6 @@ package com.ahbe.checklist
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
-import android.app.TimePickerDialog
-import android.app.AlarmManager
 import android.content.Context
 import android.content.ContentValues
 import android.content.pm.PackageManager
@@ -12,7 +10,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
-import android.provider.Settings
 import android.provider.MediaStore
 import android.widget.NumberPicker
 import android.widget.Toast
@@ -64,8 +61,6 @@ class MainActivity : Activity() {
         val text: String,
         var completed: Boolean,
         val color: Int,
-        var reminderAt: Long? = null,
-        var calendarEventId: Long? = null,
         val audioFilename: String? = null,
         val audioDurationMs: Long = 0L,
         var category: String = "کتابخانه",
@@ -112,7 +107,7 @@ class MainActivity : Activity() {
     private var pickingImageForNoteId: String? = null
     private var voiceTargetNoteId: String? = null
     private var search = ""
-    private var pendingPermissionNoteId: String? = null
+    private var lastInsertedNoteId: String? = null
     private val titleFont by lazy { loadTypeface("fonts/far_vazir.ttf") }
     private val textFont by lazy { loadTypeface("fonts/far_nazanin.ttf") }
     private val dateFont by lazy { loadTypeface("fonts/a_rooznameh.ttf") }
@@ -121,7 +116,6 @@ class MainActivity : Activity() {
     private var noteTextSize = 15
     private var inputTextSize = 14
     private var searchTextSize = 12
-    private var reminderTextSize = 11
     private var headerTextSize = 25
     // The home screen and the in-app note screen share one Activity, not an AlertDialog.
     private lateinit var screenRoot: FrameLayout
@@ -189,7 +183,6 @@ class MainActivity : Activity() {
         window.decorView.systemUiVisibility =
             View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-        ReminderEngine.createChannel(this)
         loadCategories()
         loadTabStyles()
         selectedCategory = getSharedPreferences("checklist_native", MODE_PRIVATE)
@@ -220,7 +213,6 @@ class MainActivity : Activity() {
         super.onResume()
         if (::dateLabel.isInitialized) {
             updateDate()
-            ReminderEngine.restore(this)
             syncVoiceDraft()
             refreshVoiceComposer()
             updatePageVoiceControls()
@@ -345,19 +337,6 @@ class MainActivity : Activity() {
         headerTop.addView(settingsButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
             marginStart = dp(10)
         })
-        // One additional independent control; all existing settings and notes remain intact.
-        val alarmButton = ImageButton(this).apply {
-            setImageResource(R.drawable.ic_alarm_clock)
-            imageTintList = ColorStateList.valueOf(muted)
-            background = shape(Color.rgb(248, 250, 252), 10, softBorder)
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            contentDescription = "آلارم"
-            setOnClickListener { com.ahbe.checklist.alarm.AlarmUi.show(this@MainActivity) }
-        }
-        headerTop.addView(alarmButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
-            marginStart = dp(6)
-        })
-
         categoryBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_RTL
@@ -1590,20 +1569,12 @@ class MainActivity : Activity() {
 
     private fun toggleCompleted(note: Note) {
         note.completed = !note.completed
-        if (note.completed && note.reminderAt != null) {
-            ReminderEngine.cancel(this, note.id)
-            PhoneCalendarStore.deleteEvent(this, note.calendarEventId)
-            note.calendarEventId = null
-            note.reminderAt = null
-        }
         saveNotes()
         renderNotes()
     }
 
     private fun removeNoteTree(note: Note) {
         notes.filter { it.parentId == note.id }.toList().forEach { removeNoteTree(it) }
-        ReminderEngine.cancel(this, note.id)
-        PhoneCalendarStore.deleteEvent(this, note.calendarEventId)
         if (playingNoteId == note.id) stopPlayback()
         note.audioFilename?.let { storedAudioFile(it)?.delete() }
         note.audioAttachments.forEach { storedAudioFile(it.filename)?.delete() }
@@ -2267,10 +2238,6 @@ class MainActivity : Activity() {
             }
             return
         }
-        if (requestCode == com.ahbe.checklist.alarm.AlarmUi.PICK_AUDIO) {
-            if (resultCode == RESULT_OK) com.ahbe.checklist.alarm.AlarmUi.receivePickedAudio(this, data)
-            return
-        }
         if (requestCode == 2016) {
             val prefs = getSharedPreferences("checklist_native", MODE_PRIVATE)
             val filename = prefs.getString("pending_audio_save", null)
@@ -2469,154 +2436,12 @@ class MainActivity : Activity() {
     }
 
 
-    private fun showReminderDialog(note: Note) {
-        if (note.completed) {
-            Toast.makeText(this, "برای تنظیم اعلان، ابتدا یادداشت را به حالت جاری برگردانید", Toast.LENGTH_LONG).show()
-            return
-        }
-        val months = arrayOf("فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
-            "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند")
-        val persian = PersianIcuCalendar.getInstance(ULocale("fa_IR@calendar=persian"))
-        note.reminderAt?.let { persian.timeInMillis = it }
-        val currentYear = PersianIcuCalendar.getInstance(
-            ULocale("fa_IR@calendar=persian")).get(PersianIcuCalendar.YEAR)
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-            gravity = Gravity.CENTER
-            setPadding(dp(9), dp(12), dp(9), dp(4))
-        }
-        val year = NumberPicker(this).apply {
-            minValue = currentYear
-            maxValue = currentYear + 10
-            value = persian.get(PersianIcuCalendar.YEAR).coerceIn(minValue, maxValue)
-            wrapSelectorWheel = false
-            descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
-        }
-        val month = NumberPicker(this).apply {
-            minValue = 1
-            maxValue = 12
-            displayedValues = months
-            value = persian.get(PersianIcuCalendar.MONTH) + 1
-            wrapSelectorWheel = false
-            descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
-        }
-        val day = NumberPicker(this).apply {
-            minValue = 1
-            maxValue = 31
-            value = persian.get(PersianIcuCalendar.DAY_OF_MONTH)
-            wrapSelectorWheel = false
-            descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
-        }
-        fun limitDay() {
-            val c = PersianIcuCalendar.getInstance(ULocale("fa_IR@calendar=persian"))
-            c.set(PersianIcuCalendar.YEAR, year.value)
-            c.set(PersianIcuCalendar.MONTH, month.value - 1)
-            c.set(PersianIcuCalendar.DAY_OF_MONTH, 1)
-            day.maxValue = c.getActualMaximum(PersianIcuCalendar.DAY_OF_MONTH)
-        }
-        year.setOnValueChangedListener { _, _, _ -> limitDay() }
-        month.setOnValueChangedListener { _, _, _ -> limitDay() }
-        limitDay()
-        row.addView(day, LinearLayout.LayoutParams(0, dp(157), 1f))
-        row.addView(month, LinearLayout.LayoutParams(0, dp(157), 1.45f))
-        row.addView(year, LinearLayout.LayoutParams(0, dp(157), 1.15f))
-        AlertDialog.Builder(this)
-            .setTitle("تاریخ اعلان")
-            .setMessage(note.text)
-            .setView(row)
-            .setNegativeButton("انصراف", null)
-            .setNeutralButton("حذف اعلان") { _, _ ->
-                ReminderEngine.cancel(this, note.id)
-                PhoneCalendarStore.deleteEvent(this, note.calendarEventId)
-                note.calendarEventId = null
-                note.reminderAt = null
-                saveNotes()
-                renderNotes()
-            }
-            .setPositiveButton("انتخاب ساعت") { _, _ ->
-                val initial = java.util.Calendar.getInstance().apply {
-                    timeInMillis = note.reminderAt ?: System.currentTimeMillis()
-                }
-                TimePickerDialog(this, { _, hour, minute ->
-                    val target = PersianIcuCalendar.getInstance(
-                        ULocale("fa_IR@calendar=persian"))
-                    target.isLenient = false
-                    target.clear()
-                    target.set(year.value, month.value - 1, day.value, hour, minute, 0)
-                    target.set(PersianIcuCalendar.MILLISECOND, 0)
-                    val timestamp = runCatching { target.timeInMillis }.getOrNull()
-                    if (timestamp == null || timestamp <= System.currentTimeMillis()) {
-                        Toast.makeText(this, "تاریخ و زمان باید در آینده باشد", Toast.LENGTH_LONG).show()
-                        return@TimePickerDialog
-                    }
-                    val newEventId = PhoneCalendarStore.saveEvent(
-                        this, note.text, timestamp, note.calendarEventId
-                    )
-                    note.reminderAt = timestamp
-                    if (newEventId != null) {
-                        note.calendarEventId = newEventId
-                        Toast.makeText(this, "یادداشت در تقویم گوشی ثبت شد", Toast.LENGTH_LONG).show()
-                    } else if (!PhoneCalendarStore.hasPermissions(this)) {
-                        Toast.makeText(this, "اعلان داخل برنامه تنظیم شد؛ برای ثبت در تقویم گوشی، مجوز تقویم را فعال کنید", Toast.LENGTH_LONG).show()
-                    } else {
-                        Toast.makeText(this, "یادآوری داخل برنامه تنظیم شد؛ تقویم گوشی در دسترس یا قابل‌نوشتن نیست", Toast.LENGTH_LONG).show()
-                    }
-                    saveNotes()
-                    ReminderEngine.schedule(this, note.id, note.text, timestamp)
-                    renderNotes()
-                    showMissingReminderAccessOptions()
-                }, initial.get(java.util.Calendar.HOUR_OF_DAY),
-                    initial.get(java.util.Calendar.MINUTE), true).show()
-            }
-            .show()
-    }
-
-    private fun startReminderSetup(note: Note) {
-        if (note.completed) {
-            Toast.makeText(this, "برای تنظیم اعلان، ابتدا یادداشت را به حالت جاری برگردانید", Toast.LENGTH_LONG).show()
-            return
-        }
-        val missing = mutableListOf<String>()
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
-            android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            missing.add(android.Manifest.permission.POST_NOTIFICATIONS)
-        }
-        if (Build.VERSION.SDK_INT >= 23) {
-            if (checkSelfPermission(android.Manifest.permission.READ_CALENDAR) !=
-                android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                missing.add(android.Manifest.permission.READ_CALENDAR)
-            }
-            if (checkSelfPermission(android.Manifest.permission.WRITE_CALENDAR) !=
-                android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                missing.add(android.Manifest.permission.WRITE_CALENDAR)
-            }
-        }
-        if (missing.isNotEmpty()) {
-            pendingPermissionNoteId = note.id
-            requestPermissions(missing.toTypedArray(), 811)
-        } else {
-            showReminderDialog(note)
-        }
-    }
-
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == com.ahbe.checklist.alarm.AlarmUi.LOCATION_PERMISSION) {
-            com.ahbe.checklist.alarm.AlarmUi.onLocationPermissionResult(
-                grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)
-            return
-        }
-        if (requestCode == com.ahbe.checklist.alarm.AlarmUi.MIC_PERMISSION) {
-            com.ahbe.checklist.alarm.AlarmUi.onMicPermissionResult(
-                grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)
-            return
-        }
         if (requestCode == 912) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 startVoiceRecording()
@@ -2625,81 +2450,7 @@ class MainActivity : Activity() {
             }
             return
         }
-        if (requestCode == 811) {
-            val noteId = pendingPermissionNoteId
-            pendingPermissionNoteId = null
-            val note = notes.firstOrNull { it.id == noteId } ?: return
-            if (Build.VERSION.SDK_INT >= 33 &&
-                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
-                android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "مجوز اعلان داده نشد؛ یادآوری داخل برنامه ذخیره می‌شود اما ممکن است اعلان نمایش داده نشود", Toast.LENGTH_LONG).show()
-            }
-            if (!PhoneCalendarStore.hasPermissions(this)) {
-                Toast.makeText(this, "بدون مجوز تقویم، رویداد در تقویم اصلی گوشی ثبت نمی‌شود", Toast.LENGTH_LONG).show()
-            }
-            showReminderDialog(note)
-        }
     }
-
-    private fun showMissingReminderAccessOptions() {
-        val notificationMissing = Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
-            android.content.pm.PackageManager.PERMISSION_GRANTED
-        val exactMissing = Build.VERSION.SDK_INT >= 31 &&
-            !(getSystemService(Context.ALARM_SERVICE) as AlarmManager).canScheduleExactAlarms()
-        if (!notificationMissing && !exactMissing) return
-
-        val message = when {
-            notificationMissing && exactMissing ->
-                "برای نمایش اعلان و اجرای آن در ساعت دقیق، دسترسی‌های زیر را بررسی کن."
-            notificationMissing ->
-                "اعلان‌های این برنامه مسدود هستند. برای دیدن یادآوری‌ها، اجازه اعلان را فعال کن."
-            else ->
-                "زنگ دقیق فعال نیست؛ اندروید ممکن است یادآوری را با تأخیر اجرا کند."
-        }
-        val builder = AlertDialog.Builder(this)
-            .setTitle("تنظیم دسترسی یادآوری")
-            .setMessage(message)
-            .setNegativeButton("بعداً", null)
-        if (notificationMissing) {
-            builder.setPositiveButton("تنظیم اعلان‌ها") { _, _ ->
-                runCatching {
-                    startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                        putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-                    })
-                }
-            }
-        }
-        if (exactMissing) {
-            builder.setNeutralButton("تنظیم زنگ دقیق") { _, _ ->
-                runCatching {
-                    startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
-                        .setData(Uri.parse("package:$packageName")))
-                }
-            }
-        }
-        builder.show()
-    }
-
-    private fun promptPreciseAlarmPermission() {
-        if (Build.VERSION.SDK_INT >= 31) {
-            val manager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            if (!manager.canScheduleExactAlarms()) {
-                AlertDialog.Builder(this)
-                    .setTitle("دسترسی زمان‌بندی دقیق")
-                    .setMessage("برای نمایش اعلان دقیقاً در زمان انتخابی، دسترسی «Alarms & reminders» را فعال کنید. بدون آن، اعلان ممکن است با تأخیر نمایش داده شود.")
-                    .setPositiveButton("تنظیم دسترسی") { _, _ ->
-                        runCatching {
-                            startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
-                                .setData(Uri.parse("package:$packageName")))
-                        }
-                    }
-                    .setNegativeButton("بعداً", null)
-                    .show()
-            }
-        }
-    }
-
 
     private fun formatDuration(durationMs: Long): String {
         val totalSeconds = (durationMs.coerceAtLeast(0L) / 1000L)
@@ -2986,7 +2737,6 @@ class MainActivity : Activity() {
         noteTextSize = prefs.getInt("noteTextSize", 15).coerceIn(12, 24)
         inputTextSize = prefs.getInt("inputTextSize", 14).coerceIn(12, 22)
         searchTextSize = prefs.getInt("searchTextSize", 12).coerceIn(10, 18)
-        reminderTextSize = prefs.getInt("reminderTextSize", 11).coerceIn(9, 16)
         headerTextSize = prefs.getInt("headerTextSize", 25).coerceIn(18, 30)
     }
 
@@ -2995,7 +2745,6 @@ class MainActivity : Activity() {
             .putInt("noteTextSize", noteTextSize)
             .putInt("inputTextSize", inputTextSize)
             .putInt("searchTextSize", searchTextSize)
-            .putInt("reminderTextSize", reminderTextSize)
             .putInt("headerTextSize", headerTextSize)
             .apply()
     }
@@ -3070,7 +2819,6 @@ class MainActivity : Activity() {
         var noteSize = noteTextSize
         var inputSize = inputTextSize
         var searchSize = searchTextSize
-        var reminderSize = reminderTextSize
         var headerSize = headerTextSize
 
         val content = LinearLayout(this).apply {
@@ -3086,7 +2834,6 @@ class MainActivity : Activity() {
         addSizeControl(content, "اندازه متن یادداشت‌ها", 12, 24, noteSize) { noteSize = it }
         addSizeControl(content, "اندازه متن افزودن کار", 12, 22, inputSize) { inputSize = it }
         addSizeControl(content, "اندازه متن جست‌وجو", 10, 18, searchSize) { searchSize = it }
-        addSizeControl(content, "اندازه متن یادآوری", 9, 16, reminderSize) { reminderSize = it }
         addSizeControl(content, "اندازه عنوان برنامه", 18, 30, headerSize) { headerSize = it }
 
         AlertDialog.Builder(this)
@@ -3097,7 +2844,6 @@ class MainActivity : Activity() {
                 noteTextSize = 15
                 inputTextSize = 14
                 searchTextSize = 12
-                reminderTextSize = 11
                 headerTextSize = 25
                 saveAppearanceSettings()
                 applyAppearanceSettings()
@@ -3107,7 +2853,6 @@ class MainActivity : Activity() {
                 noteTextSize = noteSize
                 inputTextSize = inputSize
                 searchTextSize = searchSize
-                reminderTextSize = reminderSize
                 headerTextSize = headerSize
                 saveAppearanceSettings()
                 applyAppearanceSettings()
@@ -3128,8 +2873,6 @@ class MainActivity : Activity() {
                     obj.getString("text"),
                     obj.optBoolean("completed", false),
                     obj.optInt("color", palette[i % palette.size]),
-                    obj.optLong("reminderAt", 0L).takeIf { it > 0L },
-                    obj.optLong("calendarEventId", 0L).takeIf { it > 0L },
                     obj.optString("audioFilename", "").takeIf { it.isNotEmpty() },
                     obj.optLong("audioDurationMs", 0L).coerceAtLeast(0L),
                     category = obj.optString("category", "کتابخانه").ifBlank { "کتابخانه" },
@@ -3175,8 +2918,6 @@ class MainActivity : Activity() {
                 put("text", it.text)
                 put("completed", it.completed)
                 put("color", it.color)
-                put("reminderAt", it.reminderAt ?: 0L)
-                put("calendarEventId", it.calendarEventId ?: 0L)
                 put("audioFilename", it.audioFilename ?: "")
                 put("audioDurationMs", it.audioDurationMs)
                 put("category", it.category)
