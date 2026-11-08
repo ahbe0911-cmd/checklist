@@ -386,7 +386,8 @@ object AlarmUi {
     private fun edit(a:Activity,item:AlarmItem,sunrise:Boolean){
         val copy=AlarmItem.from(item.toJson())
         val root=container(a).apply{
-            setBackgroundColor(Color.WHITE)
+            background=shape(a,Color.WHITE,24)
+            clipToOutline=true
             setPadding(dp(a,19),dp(a,18),dp(a,19),dp(a,14))
         }
         root.addView(txt(a,if(sunrise)"تنظیم آلارم طلوع" else "افزودن و ویرایش آلارم",
@@ -740,7 +741,8 @@ object AlarmUi {
         var selectedLabel=if(current==null)"" else AlarmStore.locationLabel(a)
         val root=container(a).apply{
             setPadding(dp(a,20),dp(a,19),dp(a,20),dp(a,17))
-            setBackgroundColor(Color.WHITE)
+            background=shape(a,Color.WHITE,24)
+            clipToOutline=true
         }
         root.addView(txt(a,"موقعیت طلوع آفتاب",23f,navy,true).apply{
             typeface=headingFont(a)
