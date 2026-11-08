@@ -149,7 +149,7 @@ class AlarmHomeActivity: Activity() {
 
     override fun onResume(){
         super.onResume()
-        if(::hint.isInitialized)hint.post{proceed(true)}
+        if(::hint.isInitialized)hint.post{proceed(false)}
     }
 
     override fun onRequestPermissionsResult(requestCode:Int,
@@ -157,7 +157,8 @@ class AlarmHomeActivity: Activity() {
         super.onRequestPermissionsResult(requestCode,permissions,grantResults)
         if(requestCode==runtimeCode) {
             runtimeRequestInFlight=false
-            proceed(true)
+            proceed(grantResults.isNotEmpty() &&
+                grantResults.all{it==PackageManager.PERMISSION_GRANTED})
         } else if(requestCode==AlarmUi.LOCATION_PERMISSION) {
             AlarmUi.onLocationPermissionResult(grantResults.isNotEmpty() &&
                 grantResults.all{it==PackageManager.PERMISSION_GRANTED})
@@ -173,11 +174,11 @@ class AlarmHomeActivity: Activity() {
             if(resultCode==RESULT_OK)AlarmUi.receivePickedAudio(this,data)
         }else if(requestCode==importCode && resultCode==RESULT_OK) {
             val uri=data?.data?:return
-            androidxWorkImport(uri)
+            importAlarmBackup(uri)
         }
     }
 
-    private fun androidxWorkImport(uri:Uri) {
+    private fun importAlarmBackup(uri:Uri) {
         Thread {
             val result=runCatching{AlarmMigration.importFromNotesBackup(this,uri)}
             runOnUiThread {
