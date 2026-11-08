@@ -42,8 +42,10 @@ jobs:
         run: |
           mkdir -p app/src/main/assets/fonts
           curl --fail --location --retry 3 --silent --show-error "https://raw.githubusercontent.com/rastikerdar/vazirmatn/6e553e33489a8f9dfaccc76860a2e3f3c1e66de7/fonts/ttf/Vazirmatn-Bold.ttf" -o app/src/main/assets/fonts/far_vazir.ttf
+          curl --fail --location --retry 3 --silent --show-error "https://raw.githubusercontent.com/rastikerdar/vazirmatn/6e553e33489a8f9dfaccc76860a2e3f3c1e66de7/fonts/ttf/Vazirmatn-Regular.ttf" -o app/src/main/assets/fonts/vazirmatn_regular.ttf
           curl --fail --location --retry 3 --silent --show-error "https://raw.githubusercontent.com/nadi1368/hris/c6a52b7ff837281639e9d5d70a468ef50cc791d7/src/assets/fonts/bundle/fonts/Far_Nazanin.ttf" -o app/src/main/assets/fonts/far_nazanin.ttf
           curl --fail --location --retry 3 --silent --show-error "https://raw.githubusercontent.com/MahmoodHashem/digital_book_reader/9f01097b9633202fc89aebcd48070023a0dc2106/assets/fonts/ARooznameh.ttf" -o app/src/main/assets/fonts/a_rooznameh.ttf
+          test -s app/src/main/assets/fonts/vazirmatn_regular.ttf
           test "$(git hash-object app/src/main/assets/fonts/far_vazir.ttf)" = "efa9b095da01d299310bdcae293e24e657fe6da9"
           test "$(git hash-object app/src/main/assets/fonts/far_nazanin.ttf)" = "5394a09545ac3274f1d24a3ff24777cac8baa584"
           test "$(git hash-object app/src/main/assets/fonts/a_rooznameh.ttf)" = "81c6269ddcbfef6b0f041dc2a55c3d2a396b19aa"
@@ -54,7 +56,7 @@ jobs:
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: checklist-native-debug-apk
+          name: novi-notes-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
