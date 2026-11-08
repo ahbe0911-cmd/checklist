@@ -2,8 +2,6 @@ package com.ahbe.checklist
 
 import android.content.Context
 import android.net.Uri
-import com.ahbe.checklist.alarm.AlarmStore
-import com.ahbe.checklist.alarm.AlarmScheduler
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -121,8 +119,7 @@ object UserBackup {
                         "string","boolean","int","long","float","strings"))
                 }
             }
-            // Preserve the existing alarm schedule until the replacement is validated.
-            AlarmStore.read(c).forEach { AlarmScheduler.cancel(c,it.id) }
+            // Keep the original alarm backup data for importing into the standalone app.
             for(name in names) {
                 val entries=prefs.getJSONObject(name)
                 val editor=c.getSharedPreferences(name,Context.MODE_PRIVATE).edit().clear()
@@ -152,7 +149,6 @@ object UserBackup {
                 dest.parentFile?.mkdirs()
                 source.copyTo(dest,overwrite=true)
             }
-            AlarmStore.read(c).filter { it.enabled }.forEach { AlarmScheduler.schedule(c,it) }
         } finally {
             staged.deleteRecursively()
         }
