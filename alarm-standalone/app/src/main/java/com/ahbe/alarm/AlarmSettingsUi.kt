@@ -90,7 +90,7 @@ object AlarmSettingsUi {
             gravity = Gravity.CENTER_VERTICAL
             orientation = LinearLayout.HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_RTL
-            minHeight = dp(c, 76)
+            minimumHeight = dp(c, 76)
             setPadding(dp(c, 3), dp(c, 8), dp(c, 3), dp(c, 8))
             isClickable = true
             isFocusable = true
