@@ -47,6 +47,7 @@ object AlarmUi {
     private var chooser:( (String)->Unit )?=null
     private var locateAfterPermission:(()->Unit)?=null
     private var recordAfterPermission:(()->Unit)?=null
+    private var activeDialog:Dialog?=null
     private var preview:MediaPlayer?=null
     private var recorder:MediaRecorder?=null
     private var recordingFile:File?=null
@@ -92,6 +93,7 @@ object AlarmUi {
     }
     private fun stopPreview(){runCatching{preview?.stop()};runCatching{preview?.release()};preview=null}
     fun show(a:Activity) {
+        activeDialog?.dismiss()
         stopPreview()
         val shell=container(a).apply{
             setPadding(dp(a,18),dp(a,10),dp(a,18),dp(a,16))
@@ -115,7 +117,7 @@ object AlarmUi {
         val solarCard=card(a,content)
         solarCard.addView(txt(a,"☀  آلارم هوشمند طلوع آفتاب",18f,navy,true))
         val location=AlarmStore.location(a)
-        solarCard.addView(txt(a,"موقعیت: "+if(location==null)"ثبت نشده" else AlarmStore.locationLabel(a),
+        solarCard.addView(txt(a,"موقعیت: "+if(location==null)"هنوز ثبت نشده؛ مکان‌یابی خودکار در جریان است" else AlarmStore.locationLabel(a),
             13f,muted))
         if(location!=null){
             val zone=runCatching{ZoneId.of(location.third)}.getOrDefault(ZoneId.systemDefault())
@@ -177,6 +179,13 @@ object AlarmUi {
         },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,12)})
         content.addView(button(a,"＋ افزودن آلارم"){
             edit(a,AlarmItem(title="آلارم جدید"),false,dialog)
+        },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,12)})
+        content.addView(button(a,"آزمایش واقعی آلارم در ۱۵ ثانیه") {
+            if(AlarmScheduler.scheduleTest(a,15)) {
+                Toast.makeText(a,"تست ثبت شد. صفحه را قفل کنید و زنگ را بررسی کنید.",Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(a,"آلارم دقیق مجوز ندارد؛ از تنظیمات فعال کنید.",Toast.LENGTH_LONG).show()
+            }
         },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,12);bottomMargin=dp(a,16)})
         val mgr=a.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         if(Build.VERSION.SDK_INT>=31 && !mgr.canScheduleExactAlarms()){
@@ -208,7 +217,11 @@ object AlarmUi {
             addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
             attributes=attributes.apply{dimAmount=0.55f;gravity=Gravity.CENTER}
         }
-        dialog.setOnDismissListener {stopPreview();stopRecorder(false)}
+        dialog.setOnDismissListener {
+            stopPreview();stopRecorder(false)
+            if(activeDialog===dialog)activeDialog=null
+        }
+        activeDialog=dialog
         dialog.show()
         dialog.window?.setLayout((a.resources.displayMetrics.widthPixels*0.95).toInt(),
             (a.resources.displayMetrics.heightPixels*0.86).toInt())
@@ -578,10 +591,10 @@ object AlarmUi {
                     place.setText("موقعیت فعلی")
                 }
             }
-            if(a.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)==
+            if(a.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==
                 PackageManager.PERMISSION_GRANTED)locateAfterPermission?.invoke()
-            else a.requestPermissions(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION),
-                LOCATION_PERMISSION)
+            else a.requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION),LOCATION_PERMISSION)
         })
         AlertDialog.Builder(a).setTitle("موقعیت آلارم طلوع")
             .setView(layout).setNegativeButton("انصراف",null)
@@ -602,25 +615,61 @@ object AlarmUi {
                 }
             }.show()
     }
+    /**
+     * GPS and network are both attempted. Cached coordinates are accepted only if recent,
+     * never as a silent fallback to an arbitrarily old location.
+     */
     private fun readLocation(a:Activity,callback:(Double,Double)->Unit) {
-        val mgr=a.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        if(a.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)!=
+        if(a.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=
             PackageManager.PERMISSION_GRANTED)return
-        val provider=when{
-            mgr.isProviderEnabled(LocationManager.NETWORK_PROVIDER)->LocationManager.NETWORK_PROVIDER
-            mgr.isProviderEnabled(LocationManager.GPS_PROVIDER)->LocationManager.GPS_PROVIDER
-            else->null
+        val mgr=a.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val providers=listOf(LocationManager.GPS_PROVIDER,LocationManager.NETWORK_PROVIDER)
+            .filter {runCatching{mgr.isProviderEnabled(it)}.getOrDefault(false)}
+        if(providers.isEmpty()){
+            Toast.makeText(a,"مکان‌یابی گوشی خاموش است؛ GPS را روشن کنید",Toast.LENGTH_LONG).show()
+            return
         }
-        if(provider==null){Toast.makeText(a,"مکان‌یابی گوشی خاموش است",Toast.LENGTH_LONG).show();return}
-        if(Build.VERSION.SDK_INT>=30){
-            mgr.getCurrentLocation(provider,null,a.mainExecutor){loc->
-                if(loc!=null)callback(loc.latitude,loc.longitude)
-                else Toast.makeText(a,"موقعیت یافت نشد؛ مختصات را دستی وارد کنید",
+        val cached=providers.mapNotNull { p ->
+            runCatching {mgr.getLastKnownLocation(p)}.getOrNull()
+        }.filter {it.time>System.currentTimeMillis()-2*60*60*1000L}
+            .minByOrNull {it.accuracy}
+        if(cached!=null && cached.accuracy<=2000f) {
+            callback(cached.latitude,cached.longitude)
+            return
+        }
+        fun query(index:Int) {
+            if(index>=providers.size) {
+                Toast.makeText(a,"موقعیت پیدا نشد؛ GPS را روشن کنید یا از نقشه انتخاب کنید",
                     Toast.LENGTH_LONG).show()
+                return
             }
-        }else{
-            val loc=mgr.getLastKnownLocation(provider)
-            if(loc!=null)callback(loc.latitude,loc.longitude)
+            val provider=providers[index]
+            if(Build.VERSION.SDK_INT>=30) {
+                runCatching {
+                    mgr.getCurrentLocation(provider,null,a.mainExecutor){loc->
+                        if(loc!=null)callback(loc.latitude,loc.longitude)
+                        else query(index+1)
+                    }
+                }.onFailure { query(index+1) }
+            } else {
+                val loc=runCatching{mgr.getLastKnownLocation(provider)}.getOrNull()
+                if(loc!=null)callback(loc.latitude,loc.longitude) else query(index+1)
+            }
+        }
+        query(0)
+    }
+    /** Automatically locate only new/previously auto-located alarms; never override a map pin. */
+    fun refreshAutomaticLocation(a:Activity,updated:()->Unit={}) {
+        if(AlarmStore.location(a)!=null && !AlarmStore.isAutomaticLocation(a))return
+        if(a.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=
+            PackageManager.PERMISSION_GRANTED)return
+        readLocation(a){lat,lon->
+            if(AlarmStore.location(a)==null || AlarmStore.isAutomaticLocation(a)){
+                runCatching {
+                    AlarmStore.setLocation(a,lat,lon,ZoneId.systemDefault().id,
+                        "موقعیت فعلی گوشی","auto")
+                }.onSuccess { updated() }
+            }
         }
     }
     fun onLocationPermissionResult(granted:Boolean){

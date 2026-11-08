@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "ProfessionalChecklist"
-include(":app")
+include(":app", ":alarm")
