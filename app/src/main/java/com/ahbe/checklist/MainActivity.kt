@@ -266,7 +266,7 @@ class MainActivity : Activity() {
             layoutDirection = View.LAYOUT_DIRECTION_RTL
             setBackgroundColor(surface)
         }
-        screenRoot = FrameLayout(this)
+        screenRoot = layoutInflater.inflate(R.layout.activity_main, null) as FrameLayout
         homePage = root
         screenRoot.addView(homePage, FrameLayout.LayoutParams(-1, -1))
         setContentView(screenRoot)
