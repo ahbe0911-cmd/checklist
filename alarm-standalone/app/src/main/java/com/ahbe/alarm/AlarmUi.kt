@@ -46,6 +46,7 @@ object AlarmUi {
     private val days=arrayOf("ش","ی","د","س","چ","پ","ج")
     private var chooser:( (String)->Unit )?=null
     private var locateAfterPermission:(()->Unit)?=null
+    private var locationDenied:(()->Unit)?=null
     private var recordAfterPermission:(()->Unit)?=null
     private var preview:MediaPlayer?=null
     private var recorder:MediaRecorder?=null
@@ -838,6 +839,7 @@ object AlarmUi {
             selectedLat=latitude
             selectedLon=longitude
             selectedZone=newZone
+            selectedLabel=preferred.ifBlank{"موقعیت انتخاب‌شده"}
             summary.text=if(preferred.isBlank())"در حال شناسایی نام شهر…" else preferred
             hint.text="مکان شناسایی شد؛ برای ثبت، تأیید موقعیت را بزنید"
             save.isEnabled=true;save.alpha=1f
@@ -885,6 +887,12 @@ object AlarmUi {
         detect.setOnClickListener{
             hint.text="در حال دریافت موقعیت گوشی…"
             detect.isEnabled=false;detect.alpha=0.65f
+            locationDenied={
+                if(dialog.isShowing){
+                    hint.text="مجوز موقعیت داده نشد؛ دوباره تلاش کنید یا تنظیمات پیشرفته را باز کنید."
+                    detect.isEnabled=true;detect.alpha=1f
+                }
+            }
             locateAfterPermission={
                 readLocation(a,{latitude,longitude->
                     if(dialog.isShowing){
@@ -916,6 +924,7 @@ object AlarmUi {
                 .onSuccess{
                     confirmed=true
                     locateAfterPermission=null
+                    locationDenied=null
                     dialog.dismiss()
                     done()
                 }.onFailure{
@@ -923,7 +932,10 @@ object AlarmUi {
                 }
         }
         dialog.setOnDismissListener{
-            if(!confirmed)locateAfterPermission=null
+            if(!confirmed){
+                locateAfterPermission=null
+                locationDenied=null
+            }
         }
     }
     private fun readLocation(a:Activity,callback:(Double,Double)->Unit,onError:()->Unit={}){
@@ -954,8 +966,9 @@ object AlarmUi {
         }
     }
     fun onLocationPermissionResult(granted:Boolean){
-        if(granted)locateAfterPermission?.invoke()
+        if(granted)locateAfterPermission?.invoke() else locationDenied?.invoke()
         locateAfterPermission=null
+        locationDenied=null
     }
     private fun requestRecorder(a:Activity,onSave:(String)->Unit){
         if(a.checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=
