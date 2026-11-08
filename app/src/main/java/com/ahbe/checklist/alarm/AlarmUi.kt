@@ -38,11 +38,11 @@ object AlarmUi {
     const val PICK_AUDIO=7022
     const val LOCATION_PERMISSION=7023
     const val MIC_PERMISSION=7024
-    private val navy=Color.rgb(30,41,59)
-    private val blue=Color.rgb(73,106,194)
-    private val muted=Color.rgb(101,116,139)
-    private val light=Color.rgb(246,248,252)
-    private val border=Color.rgb(223,229,240)
+    private val navy=Color.rgb(25,36,58)
+    private val blue=Color.rgb(65,86,204)
+    private val muted=Color.rgb(112,123,143)
+    private val light=Color.rgb(247,248,250)
+    private val tinted=Color.rgb(237,241,255)
     private val days=arrayOf("ش","ی","د","س","چ","پ","ج")
     private var chooser:( (String)->Unit )?=null
     private var locateAfterPermission:(()->Unit)?=null
@@ -54,12 +54,13 @@ object AlarmUi {
     private var waveformTick:Runnable?=null
 
     private fun dp(c:Context,v:Int)=(v*c.resources.displayMetrics.density+0.5f).toInt()
-    private fun shape(c:Context,color:Int,r:Int=14,stroke:Int?=null)=GradientDrawable().apply{
-        setColor(color);cornerRadius=dp(c,r).toFloat()
-        if(stroke!=null)setStroke(dp(c,1),stroke)
+    private fun shape(c:Context,color:Int,r:Int=14)=GradientDrawable().apply{
+        setColor(color)
+        cornerRadius=dp(c,r).toFloat()
     }
     private fun vazir(c:Context,bold:Boolean=false):Typeface = runCatching {
-        Typeface.createFromAsset(c.assets,"fonts/far_vazir.ttf")
+        val font=Typeface.createFromAsset(c.assets,"fonts/far_vazir.ttf")
+        if(bold)Typeface.create(font,Typeface.BOLD) else font
     }.getOrDefault(if(bold)Typeface.DEFAULT_BOLD else Typeface.DEFAULT)
     private fun txt(c:Context,value:String,size:Float=15f,color:Int=navy,bold:Boolean=false)=
         TextView(c).apply{
@@ -68,12 +69,45 @@ object AlarmUi {
             typeface=vazir(c,bold)
             setPadding(dp(c,3),dp(c,5),dp(c,3),dp(c,5))
         }
-    private fun button(c:Context,value:String,action:()->Unit)=txt(c,value,14f,blue,true).apply {
+    private fun button(c:Context,value:String,action:()->Unit)=txt(c,value,14f,blue,true).apply{
         gravity=Gravity.CENTER
-        setPadding(dp(c,12),dp(c,11),dp(c,12),dp(c,11))
-        background=shape(c,Color.rgb(236,242,255),12,border)
-        isClickable=true;setOnClickListener{action()}
+        minHeight=dp(c,48)
+        setPadding(dp(c,14),dp(c,11),dp(c,14),dp(c,11))
+        background=shape(c,tinted,14)
+        isClickable=true;isFocusable=true;setOnClickListener{action()}
     }
+    private fun primaryButton(c:Context,value:String,action:()->Unit)=
+        button(c,value,action).apply{
+            setTextColor(Color.WHITE)
+            background=shape(c,blue,16)
+            elevation=dp(c,2).toFloat()
+            minHeight=dp(c,56)
+            textSize=16f
+        }
+    private fun iconButton(c:Context,icon:Int,label:String,color:Int=blue,
+        action:()->Unit)=ImageButton(c).apply{
+        setImageResource(icon)
+        imageTintList=ColorStateList.valueOf(color)
+        background=shape(c,tinted,14)
+        scaleType=ImageView.ScaleType.CENTER_INSIDE
+        setPadding(dp(c,12),dp(c,12),dp(c,12),dp(c,12))
+        contentDescription=label
+        isClickable=true;isFocusable=true
+        setOnClickListener{action()}
+    }
+    private fun alarmSwitch(c:Context,checked:Boolean,label:String,onToggle:()->Unit)=
+        Switch(c).apply{
+            isChecked=checked
+            contentDescription=label
+            minWidth=dp(c,58);minHeight=dp(c,48)
+            thumbTintList=ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_checked),intArrayOf()),
+                intArrayOf(Color.WHITE,Color.WHITE))
+            trackTintList=ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_checked),intArrayOf()),
+                intArrayOf(blue,Color.rgb(204,211,224)))
+            setOnCheckedChangeListener{_,_->onToggle()}
+        }
     private fun container(c:Context)=LinearLayout(c).apply{
         orientation=LinearLayout.VERTICAL;layoutDirection=View.LAYOUT_DIRECTION_RTL
     }
@@ -81,12 +115,16 @@ object AlarmUi {
         (v.parent as? android.view.ViewGroup)?.removeView(v)
     }
     private fun card(c:Context,parent:LinearLayout):LinearLayout{
-        val block=container(c).apply {
-            setPadding(dp(c,13),dp(c,11),dp(c,13),dp(c,11))
-            background=shape(c,Color.WHITE,16,border)
+        val block=container(c).apply{
+            setPadding(dp(c,18),dp(c,15),dp(c,18),dp(c,16))
+            background=shape(c,Color.WHITE,20)
+            elevation=dp(c,3).toFloat()
+            clipToPadding=false
         }
-        parent.addView(block,LinearLayout.LayoutParams(-1,-2).apply {
+        parent.addView(block,LinearLayout.LayoutParams(-1,-2).apply{
             topMargin=dp(c,10)
+            bottomMargin=dp(c,6)
+            marginStart=dp(c,3);marginEnd=dp(c,3)
         })
         return block
     }
@@ -94,26 +132,50 @@ object AlarmUi {
     fun show(a:Activity) {
         stopPreview()
         val shell=container(a).apply{
-            setPadding(dp(a,18),dp(a,10),dp(a,18),dp(a,16))
+            setPadding(dp(a,17),dp(a,16),dp(a,17),dp(a,14))
             setBackgroundColor(light)
+            clipToPadding=false
+            clipChildren=false
         }
-        val top=LinearLayout(a).apply {
+        val top=LinearLayout(a).apply{
             layoutDirection=View.LAYOUT_DIRECTION_RTL
             gravity=Gravity.CENTER_VERTICAL
+            minimumHeight=dp(a,55)
         }
         shell.addView(top)
-        top.addView(txt(a,"آلارم",23f,navy,true),LinearLayout.LayoutParams(0,-2,1f))
+        top.addView(txt(a,"آلارم",25f,navy,true),LinearLayout.LayoutParams(0,-2,1f))
         val dialog=Dialog(a)
-        top.addView(button(a,"✕  بستن"){dialog.dismiss()})
-        val scroll=ScrollView(a).apply{isFillViewport=false;isVerticalScrollBarEnabled=false}
+        top.addView(button(a,"بستن"){dialog.dismiss()})
+        val scroll=ScrollView(a).apply{
+            isFillViewport=false
+            isVerticalScrollBarEnabled=false
+            clipToPadding=false;clipChildren=false
+        }
         shell.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
-        val content=container(a)
+        val content=container(a).apply{
+            setPadding(dp(a,2),dp(a,5),dp(a,2),dp(a,18))
+            clipToPadding=false;clipChildren=false
+        }
         scroll.addView(content)
         val all=AlarmStore.read(a)
         val solar=all.firstOrNull{it.sunrise}?:AlarmItem(id="sunrise-primary",
             title="آلارم طلوع آفتاب",sunrise=true,enabled=false)
         val solarCard=card(a,content)
-        solarCard.addView(txt(a,"☀  آلارم هوشمند طلوع آفتاب",18f,navy,true))
+        val solarHeader=LinearLayout(a).apply{
+            layoutDirection=View.LAYOUT_DIRECTION_RTL
+            gravity=Gravity.CENTER_VERTICAL
+        }
+        solarCard.addView(solarHeader)
+        solarHeader.addView(txt(a,"☀  آلارم هوشمند طلوع آفتاب",17f,navy,true),
+            LinearLayout.LayoutParams(0,-2,1f))
+        solarHeader.addView(alarmSwitch(a,solar.enabled,"فعال‌سازی آلارم طلوع آفتاب"){
+            solar.enabled=!solar.enabled
+            if(solar.enabled && AlarmStore.location(a)==null){
+                solar.enabled=false
+                locationEditor(a){solar.enabled=true;AlarmStore.update(a,solar);show(a)}
+            }else{AlarmStore.update(a,solar);show(a)}
+            dialog.dismiss()
+        })
         val location=AlarmStore.location(a)
         solarCard.addView(txt(a,"موقعیت: "+if(location==null)"ثبت نشده" else AlarmStore.locationLabel(a),
             13f,muted))
@@ -127,73 +189,80 @@ object AlarmUi {
         solarCard.addView(txt(a,"فاصله: "+solar.offset+" دقیقه قبل | صدا: "+
             AlarmSounds.label(solar.sound),13f,muted))
         solarCard.addView(txt(a,"اجرای بعدی: "+nextText(a,solar),13f,muted))
-        val solarControls=LinearLayout(a).apply{orientation=LinearLayout.HORIZONTAL}
+        val solarControls=LinearLayout(a).apply{
+            orientation=LinearLayout.HORIZONTAL
+            setPadding(0,dp(a,9),0,0)
+        }
         solarCard.addView(solarControls)
         solarControls.addView(button(a,"تنظیمات"){edit(a,solar,true,dialog)},
             LinearLayout.LayoutParams(0,-2,1f))
         solarControls.addView(button(a,"موقعیت"){dialog.dismiss();locationEditor(a){show(a)}},
-            LinearLayout.LayoutParams(0,-2,1f).apply{marginStart=dp(a,6)})
-        solarControls.addView(button(a,if(solar.enabled)"فعال ✓" else "خاموش"){ 
-            solar.enabled=!solar.enabled
-            if(solar.enabled && AlarmStore.location(a)==null) {
-                solar.enabled=false
-                locationEditor(a){solar.enabled=true;AlarmStore.update(a,solar);show(a)}
-            }else{AlarmStore.update(a,solar);show(a)}
-            dialog.dismiss()
-        },LinearLayout.LayoutParams(0,-2,1f).apply{marginStart=dp(a,6)})
-        content.addView(txt(a,"آلارم‌های معمولی",18f,navy,true).apply{
-            setPadding(0,dp(a,20),0,dp(a,5))
+            LinearLayout.LayoutParams(0,-2,1f).apply{marginStart=dp(a,8)})
+        content.addView(txt(a,"آلارم‌های معمولی",19f,navy,true).apply{
+            setPadding(dp(a,2),dp(a,19),0,dp(a,5))
         })
         all.filterNot{it.sunrise}.forEach{item->
             val block=card(a,content)
-            block.addView(txt(a,item.title,17f,navy,true))
-            block.addView(txt(a,"%02d:%02d".format(item.hour,item.minute)+
-                "  •  "+repeatName(item)+
-                "  •  "+if(item.enabled)"فعال" else "غیرفعال",14f,muted))
-            block.addView(txt(a,"صدای زنگ: "+AlarmSounds.label(item.sound)+
-                "\nنوبت بعدی: "+nextText(a,item),12f,muted))
-            val controls=LinearLayout(a).apply{orientation=LinearLayout.HORIZONTAL}
+            val hero=LinearLayout(a).apply{
+                orientation=LinearLayout.HORIZONTAL
+                layoutDirection=View.LAYOUT_DIRECTION_RTL
+                gravity=Gravity.CENTER_VERTICAL
+            }
+            block.addView(hero)
+            hero.addView(txt(a,"%02d:%02d".format(item.hour,item.minute),34f,navy,true).apply{
+                textDirection=View.TEXT_DIRECTION_LTR
+            },LinearLayout.LayoutParams(0,-2,1f))
+            hero.addView(alarmSwitch(a,item.enabled,"فعال یا غیرفعال کردن "+item.title){
+                item.enabled=!item.enabled
+                AlarmStore.update(a,item);dialog.dismiss();show(a)
+            })
+            block.addView(txt(a,item.title,16f,navy,true))
+            block.addView(txt(a,repeatName(item),13f,muted))
+            block.addView(txt(a,"صدای زنگ: "+AlarmSounds.label(item.sound),12f,muted))
+            block.addView(txt(a,"نوبت بعدی: "+nextText(a,item),12f,muted))
+            val controls=LinearLayout(a).apply{
+                orientation=LinearLayout.HORIZONTAL
+                layoutDirection=View.LAYOUT_DIRECTION_RTL
+                gravity=Gravity.RIGHT
+                setPadding(0,dp(a,10),0,0)
+            }
             block.addView(controls)
-            for(pair in listOf(
-                "ویرایش" to {edit(a,item,false,dialog)},
-                (if(item.enabled)"خاموش" else "روشن") to {
-                    item.enabled=!item.enabled;AlarmStore.update(a,item);dialog.dismiss();show(a)
-                },
-                "حذف" to {
-                    AlertDialog.Builder(a).setTitle("حذف آلارم")
-                        .setMessage("«"+item.title+"» حذف شود؟")
-                        .setNegativeButton("انصراف",null)
-                        .setPositiveButton("حذف"){_,_->AlarmStore.remove(a,item.id);dialog.dismiss();show(a)}
-                        .show()
-                }
-            ))controls.addView(button(a,pair.first){pair.second()},
-                LinearLayout.LayoutParams(0,-2,1f).apply{marginStart=dp(a,5)})
+            controls.addView(iconButton(a,android.R.drawable.ic_menu_edit,"ویرایش "+item.title){
+                edit(a,item,false,dialog)
+            },LinearLayout.LayoutParams(dp(a,48),dp(a,48)))
+            controls.addView(iconButton(a,android.R.drawable.ic_menu_delete,"حذف "+item.title,muted){
+                AlertDialog.Builder(a).setTitle("حذف آلارم")
+                    .setMessage("«"+item.title+"» حذف شود؟")
+                    .setNegativeButton("انصراف",null)
+                    .setPositiveButton("حذف"){_,_->AlarmStore.remove(a,item.id);dialog.dismiss();show(a)}
+                    .show()
+            },LinearLayout.LayoutParams(dp(a,48),dp(a,48)).apply{marginStart=dp(a,9)})
         }
         content.addView(button(a,"تقویم شمسی آلارم‌ها"){
             choosePersianDate(a,System.currentTimeMillis()){selected->
                 val fresh=AlarmItem(title="آلارم جدید",repeat=0,startDate=selected)
                 edit(a,fresh,false,dialog)
             }
-        },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,12)})
-        content.addView(button(a,"＋ افزودن آلارم"){
+        },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,14)})
+        content.addView(primaryButton(a,"＋ افزودن آلارم"){
             edit(a,AlarmItem(title="آلارم جدید"),false,dialog)
         },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,12);bottomMargin=dp(a,16)})
         val mgr=a.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         if(Build.VERSION.SDK_INT>=31 && !mgr.canScheduleExactAlarms()){
             content.addView(txt(a,"برای اجرای دقیق زنگ، مجوز «آلارم و یادآوری» را فعال کنید.",
                 12f,Color.rgb(186,83,55)))
-            content.addView(button(a,"تنظیم مجوز آلارم دقیق") {
+            content.addView(button(a,"تنظیم مجوز آلارم دقیق"){
                 runCatching{a.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
                     Uri.parse("package:"+a.packageName)))}
             })
         }
-        if(Build.VERSION.SDK_INT>=34) {
+        if(Build.VERSION.SDK_INT>=34){
             val nm=a.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
             if(!nm.canUseFullScreenIntent()){
                 content.addView(txt(a,"برای نمایش زنگ روی صفحه قفل، مجوز نمایش تمام‌صفحه را بررسی کنید.",
                     12f,Color.rgb(186,83,55)))
-                content.addView(button(a,"تنظیم نمایش تمام‌صفحه") {
-                    runCatching {
+                content.addView(button(a,"تنظیم نمایش تمام‌صفحه"){
+                    runCatching{
                         a.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
                             Uri.parse("package:"+a.packageName)))
                     }
@@ -201,14 +270,14 @@ object AlarmUi {
             }
         }
         dialog.setContentView(shell)
-        dialog.window?.apply {
+        dialog.window?.apply{
             setBackgroundDrawableResource(android.R.color.transparent)
             setLayout((a.resources.displayMetrics.widthPixels*0.95).toInt(),
                 (a.resources.displayMetrics.heightPixels*0.88).toInt())
             addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
             attributes=attributes.apply{dimAmount=0.55f;gravity=Gravity.CENTER}
         }
-        dialog.setOnDismissListener {stopPreview();stopRecorder(false)}
+        dialog.setOnDismissListener{stopPreview();stopRecorder(false)}
         dialog.show()
         dialog.window?.setLayout((a.resources.displayMetrics.widthPixels*0.95).toInt(),
             (a.resources.displayMetrics.heightPixels*0.86).toInt())
