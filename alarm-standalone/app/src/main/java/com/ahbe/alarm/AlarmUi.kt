@@ -393,7 +393,7 @@ object AlarmUi {
         root.addView(txt(a,"زمان و جزئیات زنگ را مطابق برنامه خود تنظیم کنید.",13f,muted))
         val outer=ScrollView(a).apply{
             isVerticalScrollBarEnabled=false
-            fillViewport=false
+            isFillViewport=false
         }
         root.addView(outer,LinearLayout.LayoutParams(-1,0,1f).apply{topMargin=dp(a,12)})
         val layout=container(a).apply{setPadding(0,0,0,dp(a,18))}
@@ -478,7 +478,7 @@ object AlarmUi {
             offsetInput=softInput(a,copy.offset.toString(),"دقیقه دلخواه").apply{
                 inputType=android.text.InputType.TYPE_CLASS_NUMBER or
                     android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
-                visibility=if(offsetSpinner.selectedItemPosition==8)View.VISIBLE else View.GONE
+                visibility=if(offsetSpinner?.selectedItemPosition==8)View.VISIBLE else View.GONE
             }
             solar.addView(offsetInput,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,8)})
             val field=offsetInput
@@ -486,7 +486,7 @@ object AlarmUi {
                 object:android.widget.AdapterView.OnItemSelectedListener{
                     override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,
                         pos:Int,id:Long){
-                        field.visibility=if(pos==8)View.VISIBLE else View.GONE
+                        field?.visibility=if(pos==8)View.VISIBLE else View.GONE
                     }
                     override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
                 }
@@ -718,76 +718,239 @@ object AlarmUi {
         dialog.setOnDismissListener{web.destroy()}
         dialog.show()
     }
-    private fun locationEditor(a:Activity,done:()->Unit) {
-        val layout=container(a).apply{setPadding(dp(a,21),dp(a,10),dp(a,21),dp(a,10))}
+    private fun reverseLocationName(a:Activity,lat:Double,lon:Double,done:(String)->Unit){
+        // Android Geocoder can block or use a network backend: never call it on the UI thread.
+        Thread{
+            val label=runCatching{
+                @Suppress("DEPRECATION")
+                val address=android.location.Geocoder(a,java.util.Locale("fa"))
+                    .getFromLocation(lat,lon,1)?.firstOrNull()
+                listOfNotNull(address?.locality,address?.adminArea,address?.countryName)
+                    .map{it.trim()}.filter{it.isNotEmpty()}.distinct().joinToString("، ")
+            }.getOrNull().orEmpty().ifBlank{"موقعیت انتخاب‌شده"}
+            a.runOnUiThread{done(label)}
+        }.start()
+    }
+    private fun locationEditor(a:Activity,done:()->Unit){
         val current=AlarmStore.location(a)
-        fun input(hint:String,value:String)=EditText(a).apply{
-            this.hint=hint;setText(value);setSingleLine(true);textSize=15f
+        var selectedLat:Double?=current?.first
+        var selectedLon:Double?=current?.second
+        var selectedZone=current?.third?:TimeZone.getDefault().id
+        var selectedLabel=if(current==null)"" else AlarmStore.locationLabel(a)
+        val root=container(a).apply{
+            setPadding(dp(a,20),dp(a,19),dp(a,20),dp(a,17))
+            setBackgroundColor(Color.WHITE)
         }
-        val lat=input("عرض جغرافیایی (مثلاً 35.7)",current?.first?.toString()?:"")
-        val lon=input("طول جغرافیایی (مثلاً 51.4)",current?.second?.toString()?:"")
-        val zone=input("منطقه زمانی",current?.third?:TimeZone.getDefault().id)
-        val place=input("نام موقعیت",if(current==null)"" else AlarmStore.locationLabel(a))
-        for(v in listOf(lat,lon,zone,place))layout.addView(v)
-        layout.addView(button(a,"انتخاب مکان از روی نقشه"){
-            val startLat=lat.text.toString().toDoubleOrNull()?:current?.first?:35.7
-            val startLon=lon.text.toString().toDoubleOrNull()?:current?.second?:51.4
-            mapLocationPicker(a,startLat,startLon){latitude,longitude->
-                lat.setText(latitude.toString())
-                lon.setText(longitude.toString())
-                place.setText("مکان انتخاب‌شده روی نقشه")
-            }
+        root.addView(txt(a,"موقعیت طلوع آفتاب",23f,navy,true).apply{
+            typeface=headingFont(a)
         })
-        layout.addView(button(a,"دریافت موقعیت فعلی گوشی"){
-            locateAfterPermission={
-                readLocation(a){latitude,longitude->
-                    lat.setText(latitude.toString());lon.setText(longitude.toString())
-                    place.setText("موقعیت فعلی")
+        root.addView(txt(a,"برای محاسبه طلوع، تنها مکان خود را شناسایی کنید.",
+            13f,muted))
+        val scroll=ScrollView(a).apply{
+            isVerticalScrollBarEnabled=false
+        }
+        root.addView(scroll,LinearLayout.LayoutParams(-1,0,1f).apply{
+            topMargin=dp(a,16)
+        })
+        val content=container(a).apply{setPadding(0,0,0,dp(a,15))}
+        scroll.addView(content)
+        val placeCard=container(a).apply{
+            setPadding(dp(a,18),dp(a,18),dp(a,18),dp(a,18))
+            background=shape(a,Color.rgb(249,250,252),18)
+        }
+        content.addView(placeCard)
+        placeCard.addView(txt(a,"مکان انتخاب‌شده",12f,muted))
+        val summary=txt(a,if(current==null)"هنوز مکانی انتخاب نشده است"
+            else selectedLabel,19f,navy,true).apply{
+            typeface=locationFont(a)
+            setPadding(0,dp(a,10),0,dp(a,4))
+        }
+        placeCard.addView(summary)
+        val hint=txt(a,if(current==null)"با دکمه زیر مکان را شناسایی کنید"
+            else "موقعیت قبلی ذخیره شده است",12f,muted)
+        placeCard.addView(hint)
+        var confirmed=false
+        val detect=primaryButton(a,"⌖  تشخیص موقعیت من"){}
+        content.addView(detect,LinearLayout.LayoutParams(-1,-2).apply{
+            topMargin=dp(a,18)
+        })
+        val advancedToggle=button(a,"تنظیمات پیشرفته  ▾"){}
+        content.addView(advancedToggle,LinearLayout.LayoutParams(-1,-2).apply{
+            topMargin=dp(a,10)
+        })
+        val advanced=container(a).apply{
+            visibility=View.GONE
+            setPadding(dp(a,13),dp(a,14),dp(a,13),dp(a,14))
+            background=shape(a,Color.rgb(249,250,252),18)
+        }
+        content.addView(advanced,LinearLayout.LayoutParams(-1,-2).apply{
+            topMargin=dp(a,9)
+        })
+        advanced.addView(txt(a,"ورود دستی یا انتخاب از نقشه",14f,navy,true))
+        advanced.addView(label(a,"عرض جغرافیایی"))
+        val lat=softInput(a,current?.first?.toString()?:"","مثلاً 35.7")
+        lat.inputType=android.text.InputType.TYPE_CLASS_NUMBER or
+            android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL or
+            android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
+        advanced.addView(lat)
+        advanced.addView(label(a,"طول جغرافیایی"))
+        val lon=softInput(a,current?.second?.toString()?:"","مثلاً 51.4")
+        lon.inputType=android.text.InputType.TYPE_CLASS_NUMBER or
+            android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL or
+            android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
+        advanced.addView(lon)
+        advanced.addView(label(a,"منطقه زمانی"))
+        val zone=softInput(a,selectedZone,"Asia/Tehran")
+        zone.textDirection=View.TEXT_DIRECTION_LTR
+        advanced.addView(zone)
+        advanced.addView(label(a,"نام نمایش‌داده‌شده"))
+        val labelInput=softInput(a,selectedLabel,"نام شهر یا منطقه")
+        advanced.addView(labelInput)
+        val map=button(a,"انتخاب مکان از روی نقشه"){}
+        advanced.addView(map,LinearLayout.LayoutParams(-1,-2).apply{
+            topMargin=dp(a,10)
+        })
+        val manual=button(a,"اعمال موقعیت دستی"){}
+        advanced.addView(manual,LinearLayout.LayoutParams(-1,-2).apply{
+            topMargin=dp(a,9)
+        })
+        val actions=LinearLayout(a).apply{
+            orientation=LinearLayout.HORIZONTAL
+            layoutDirection=View.LAYOUT_DIRECTION_RTL
+            setPadding(0,dp(a,13),0,0)
+        }
+        root.addView(actions)
+        val save=primaryButton(a,"تأیید موقعیت"){}
+        save.isEnabled=current!=null
+        save.alpha=if(current!=null)1f else 0.5f
+        actions.addView(save,LinearLayout.LayoutParams(0,-2,2f))
+        val cancel=txt(a,"انصراف",15f,muted,true).apply{
+            gravity=Gravity.CENTER
+            minHeight=dp(a,52)
+            isClickable=true
+        }
+        actions.addView(cancel,LinearLayout.LayoutParams(0,-2,1f).apply{
+            marginStart=dp(a,8)
+        })
+        val dialog=showPremiumDialog(a,root,0.76f)
+        cancel.setOnClickListener{dialog.dismiss()}
+        fun updateSelection(latitude:Double,longitude:Double,newZone:String,preferred:String=""){
+            selectedLat=latitude
+            selectedLon=longitude
+            selectedZone=newZone
+            summary.text=if(preferred.isBlank())"در حال شناسایی نام شهر…" else preferred
+            hint.text="مکان شناسایی شد؛ برای ثبت، تأیید موقعیت را بزنید"
+            save.isEnabled=true;save.alpha=1f
+            lat.setText(latitude.toString());lon.setText(longitude.toString())
+            zone.setText(newZone)
+            if(preferred.isNotBlank()){
+                selectedLabel=preferred;labelInput.setText(preferred)
+            }
+            if(preferred.isBlank())reverseLocationName(a,latitude,longitude){name->
+                if(selectedLat==latitude && selectedLon==longitude && dialog.isShowing){
+                    selectedLabel=name;labelInput.setText(name)
+                    summary.text="✓  "+name
                 }
+            }else summary.text="✓  "+preferred
+        }
+        advancedToggle.setOnClickListener{
+            val opened=advanced.visibility!=View.VISIBLE
+            advanced.visibility=if(opened)View.VISIBLE else View.GONE
+            advancedToggle.text=if(opened)"بستن تنظیمات پیشرفته  ▴"
+                else "تنظیمات پیشرفته  ▾"
+        }
+        map.setOnClickListener{
+            val startLat=lat.text.toString().toDoubleOrNull()?:selectedLat?:35.7
+            val startLon=lon.text.toString().toDoubleOrNull()?:selectedLon?:51.4
+            mapLocationPicker(a,startLat,startLon){latitude,longitude->
+                updateSelection(latitude,longitude,zone.text.toString().ifBlank{
+                    TimeZone.getDefault().id
+                })
+            }
+        }
+        manual.setOnClickListener{
+            val latitude=lat.text.toString().toDoubleOrNull()
+            val longitude=lon.text.toString().toDoubleOrNull()
+            val timezone=zone.text.toString().ifBlank{TimeZone.getDefault().id}
+            if(latitude==null || longitude==null || latitude !in -90.0..90.0 ||
+                longitude !in -180.0..180.0 ||
+                runCatching{ZoneId.of(timezone)}.isFailure){
+                Toast.makeText(a,"مختصات یا منطقه زمانی معتبر نیست",
+                    Toast.LENGTH_LONG).show()
+            }else{
+                updateSelection(latitude,longitude,timezone,
+                    labelInput.text.toString().trim())
+            }
+        }
+        detect.setOnClickListener{
+            hint.text="در حال دریافت موقعیت گوشی…"
+            detect.isEnabled=false;detect.alpha=0.65f
+            locateAfterPermission={
+                readLocation(a,{latitude,longitude->
+                    if(dialog.isShowing){
+                        updateSelection(latitude,longitude,TimeZone.getDefault().id)
+                        detect.isEnabled=true;detect.alpha=1f
+                    }
+                },{
+                    if(dialog.isShowing){
+                        hint.text="مکان پیدا نشد؛ دوباره تلاش کنید یا از تنظیمات پیشرفته استفاده کنید."
+                        detect.isEnabled=true;detect.alpha=1f
+                    }
+                })
             }
             if(a.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)==
                 PackageManager.PERMISSION_GRANTED)locateAfterPermission?.invoke()
             else a.requestPermissions(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION),
                 LOCATION_PERMISSION)
-        })
-        AlertDialog.Builder(a).setTitle("موقعیت آلارم طلوع")
-            .setView(layout).setNegativeButton("انصراف",null)
-            .setPositiveButton("ذخیره"){_,_->
-                val latitude=lat.text.toString().toDoubleOrNull()
-                val longitude=lon.text.toString().toDoubleOrNull()
-                if(latitude==null || longitude==null || latitude !in -90.0..90.0 ||
-                    longitude !in -180.0..180.0){
-                    Toast.makeText(a,"مختصات نامعتبر است",Toast.LENGTH_LONG).show()
-                    return@setPositiveButton
+        }
+        save.setOnClickListener{
+            val latitude=selectedLat
+            val longitude=selectedLon
+            if(latitude==null || longitude==null){
+                Toast.makeText(a,"ابتدا موقعیت را انتخاب کنید",Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            val timezone=selectedZone
+            val name=selectedLabel.ifBlank{"موقعیت انتخاب‌شده"}
+            runCatching{AlarmStore.setLocation(a,latitude,longitude,timezone,name)}
+                .onSuccess{
+                    confirmed=true
+                    locateAfterPermission=null
+                    dialog.dismiss()
+                    done()
+                }.onFailure{
+                    Toast.makeText(a,"موقعیت یا منطقه زمانی معتبر نیست",Toast.LENGTH_LONG).show()
                 }
-                val timezone=zone.text.toString().ifBlank{TimeZone.getDefault().id}
-                runCatching{
-                    AlarmStore.setLocation(a,latitude,longitude,timezone,
-                        place.text.toString().ifBlank{"مختصات ذخیره‌شده"})
-                }.onSuccess{done()}.onFailure{
-                    Toast.makeText(a,"منطقه زمانی معتبر نیست",Toast.LENGTH_LONG).show()
-                }
-            }.show()
+        }
+        dialog.setOnDismissListener{
+            if(!confirmed)locateAfterPermission=null
+        }
     }
-    private fun readLocation(a:Activity,callback:(Double,Double)->Unit) {
+    private fun readLocation(a:Activity,callback:(Double,Double)->Unit,onError:()->Unit={}){
         val mgr=a.getSystemService(Context.LOCATION_SERVICE) as LocationManager
         if(a.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)!=
-            PackageManager.PERMISSION_GRANTED)return
+            PackageManager.PERMISSION_GRANTED){
+            onError();return
+        }
         val provider=when{
             mgr.isProviderEnabled(LocationManager.NETWORK_PROVIDER)->LocationManager.NETWORK_PROVIDER
             mgr.isProviderEnabled(LocationManager.GPS_PROVIDER)->LocationManager.GPS_PROVIDER
             else->null
         }
-        if(provider==null){Toast.makeText(a,"مکان‌یابی گوشی خاموش است",Toast.LENGTH_LONG).show();return}
+        if(provider==null){
+            Toast.makeText(a,"مکان‌یابی گوشی خاموش است",Toast.LENGTH_LONG).show()
+            onError();return
+        }
         if(Build.VERSION.SDK_INT>=30){
             mgr.getCurrentLocation(provider,null,a.mainExecutor){loc->
                 if(loc!=null)callback(loc.latitude,loc.longitude)
-                else Toast.makeText(a,"موقعیت یافت نشد؛ مختصات را دستی وارد کنید",
-                    Toast.LENGTH_LONG).show()
+                else onError()
             }
         }else{
+            @Suppress("DEPRECATION")
             val loc=mgr.getLastKnownLocation(provider)
             if(loc!=null)callback(loc.latitude,loc.longitude)
+            else onError()
         }
     }
     fun onLocationPermissionResult(granted:Boolean){
