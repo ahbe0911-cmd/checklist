@@ -1214,6 +1214,12 @@ class MainActivity : Activity() {
         if (notes.none { it.id == note.id }) return
         currentPageNoteId = note.id
         renderOpenNotePage()
+        notePage?.apply {
+            translationX = dp(35).toFloat()
+            alpha = 0f
+            animate().translationX(0f).alpha(1f).setDuration(245L)
+                .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+        }
     }
 
     private fun renderOpenNotePage() {
@@ -1292,8 +1298,9 @@ class MainActivity : Activity() {
             val voiceCard = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 layoutDirection = View.LAYOUT_DIRECTION_RTL
-                setPadding(dp(12), dp(11), dp(12), dp(11))
-                background = shape(Color.WHITE, 13, softBorder)
+                setPadding(dp(16), dp(13), dp(16), dp(13))
+                background = shape(Color.rgb(233, 247, 255), 20)
+                elevation = dp(2).toFloat()
             }
             list.addView(voiceCard, LinearLayout.LayoutParams(-1, -2).apply {
                 bottomMargin = dp(9)
@@ -1382,8 +1389,9 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_RTL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), dp(7), dp(8), dp(7))
-            background = shape(Color.WHITE, 16, softBorder)
+            setPadding(dp(9), dp(9), dp(9), dp(9))
+            background = shape(Color.WHITE, 23)
+            elevation = dp(5).toFloat()
         }
         page.addView(composer, LinearLayout.LayoutParams(-1, -2).apply {
             marginStart = dp(16)
@@ -1392,20 +1400,22 @@ class MainActivity : Activity() {
             bottomMargin = dp(8)
         })
         val entryField = EditText(this).apply {
-            hint = "یک مورد جدید بنویس..."
-            setSingleLine(true)
+            hint = "پیام جدید..."
+            setSingleLine(false)
+            maxLines = 4
             textSize = 14f
             typeface = textFont
             setTextColor(ink)
             setHintTextColor(muted)
-            background = null
-            setPadding(dp(8), 0, dp(8), 0)
-            imeOptions = EditorInfo.IME_ACTION_DONE
+            background = shape(Color.rgb(247, 247, 253), 17)
+            setPadding(dp(12), dp(9), dp(12), dp(9))
+            minimumHeight = dp(46)
+            imeOptions = EditorInfo.IME_ACTION_SEND
         }
-        composer.addView(entryField, LinearLayout.LayoutParams(0, dp(45), 1f))
+        composer.addView(entryField, LinearLayout.LayoutParams(0, -2, 1f))
         val mic = ImageButton(this).apply {
             setImageResource(R.drawable.ic_microphone)
-            background = shape(Color.rgb(240, 245, 251), 12, softBorder)
+            background = shape(Color.rgb(237, 235, 255), 17)
             imageTintList = ColorStateList.valueOf(indigo)
             setPadding(dp(11), dp(11), dp(11), dp(11))
             contentDescription = "ضبط صدا در این یادداشت"
@@ -1418,7 +1428,7 @@ class MainActivity : Activity() {
         val send = ImageButton(this).apply {
             setImageResource(R.drawable.ic_send_message)
             imageTintList = ColorStateList.valueOf(Color.WHITE)
-            background = shape(ink, 12)
+            background = shape(indigo, 17)
             setPadding(dp(11), dp(11), dp(11), dp(11))
             contentDescription = "ارسال متن یا صدای یادداشت"
         }
@@ -1436,9 +1446,11 @@ class MainActivity : Activity() {
                     if (value.isEmpty()) {
                         entryField.error = "متن را بنویس یا میکروفون را بزن"
                     } else {
-                        notes.add(Note(UUID.randomUUID().toString(), value, false,
+                        val added = Note(UUID.randomUUID().toString(), value, false,
                             palette[Random.nextInt(palette.size)],
-                            category = note.category, parentId = note.id))
+                            category = note.category, parentId = note.id)
+                        notes.add(added)
+                        lastInsertedNoteId = added.id
                         saveNotes()
                         renderNotes()
                     }
@@ -1447,7 +1459,7 @@ class MainActivity : Activity() {
         }
         send.setOnClickListener { submitPageEntry() }
         entryField.setOnEditorActionListener { _, action, _ ->
-            if (action == EditorInfo.IME_ACTION_DONE) {
+            if (action == EditorInfo.IME_ACTION_SEND) {
                 submitPageEntry()
                 true
             } else false
@@ -1464,7 +1476,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             isClickable = true
             isFocusable = true
-            background = shape(Color.rgb(237, 243, 255), 11, softBorder)
+            background = shape(Color.rgb(237, 235, 255), 16)
             setPadding(dp(8), dp(9), dp(8), dp(9))
             setOnClickListener { pickImageForNote(note) }
         }, LinearLayout.LayoutParams(-1, -2).apply {
@@ -1561,7 +1573,11 @@ class MainActivity : Activity() {
         pageVoiceButton = null
         pageVoiceStatus = null
         pageSendButton = null
-        if (::homePage.isInitialized) homePage.visibility = View.VISIBLE
+        if (::homePage.isInitialized) {
+            homePage.visibility = View.VISIBLE
+            homePage.alpha = 0.75f
+            homePage.animate().alpha(1f).setDuration(200L).start()
+        }
     }
 
     private fun toggleCompleted(note: Note) {
@@ -1950,9 +1966,11 @@ class MainActivity : Activity() {
             if (value.isEmpty()) {
                 childInput.error = "متن را بنویس"
             } else {
-                notes.add(Note(UUID.randomUUID().toString(), value, false,
+                val added = Note(UUID.randomUUID().toString(), value, false,
                     palette[Random.nextInt(palette.size)],
-                    category = note.category, parentId = note.id, dueAt = draftDueAt))
+                    category = note.category, parentId = note.id, dueAt = draftDueAt)
+                notes.add(added)
+                lastInsertedNoteId = added.id
                 saveNotes()
                 renderNotes()
                 detail.dismiss()
@@ -2425,7 +2443,10 @@ class MainActivity : Activity() {
         }
         val text = input.text.toString().trim()
         if (text.isEmpty()) return
-        notes.add(Note(UUID.randomUUID().toString(), text, false, palette[Random.nextInt(palette.size)], category = selectedCategory))
+        val added = Note(UUID.randomUUID().toString(), text, false,
+            palette[Random.nextInt(palette.size)], category = selectedCategory)
+        notes.add(added)
+        lastInsertedNoteId = added.id
         saveNotes()
         input.text.clear()
         renderNotes()
