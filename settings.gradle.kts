@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "ProfessionalChecklist"
+rootProject.name = "Novi"
 include(":app")

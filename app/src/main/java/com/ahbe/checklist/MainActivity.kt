@@ -3,8 +3,6 @@ package com.ahbe.checklist
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
-import android.app.TimePickerDialog
-import android.app.AlarmManager
 import android.content.Context
 import android.content.ContentValues
 import android.content.pm.PackageManager
@@ -12,7 +10,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
-import android.provider.Settings
 import android.provider.MediaStore
 import android.widget.NumberPicker
 import android.widget.Toast
@@ -64,8 +61,6 @@ class MainActivity : Activity() {
         val text: String,
         var completed: Boolean,
         val color: Int,
-        var reminderAt: Long? = null,
-        var calendarEventId: Long? = null,
         val audioFilename: String? = null,
         val audioDurationMs: Long = 0L,
         var category: String = "کتابخانه",
@@ -75,19 +70,19 @@ class MainActivity : Activity() {
         var dueAt: Long? = null
     )
 
-    private val surface = Color.rgb(244, 247, 246)
-    private val ink = Color.rgb(30, 41, 59)
-    private val muted = Color.rgb(100, 116, 139)
-    private val softBorder = Color.rgb(226, 232, 240)
-    private val indigo = Color.rgb(99, 102, 241)
-    private val emerald = Color.rgb(16, 185, 129)
+    private val surface = Color.rgb(246, 247, 253)
+    private val ink = Color.rgb(28, 31, 63)
+    private val muted = Color.rgb(102, 110, 138)
+    private val softBorder = Color.rgb(229, 232, 246)
+    private val indigo = Color.rgb(89, 76, 239)
+    private val emerald = Color.rgb(5, 185, 163)
     private val palette = intArrayOf(
-        Color.rgb(241, 248, 245),
-        Color.rgb(252, 244, 244),
-        Color.rgb(244, 246, 253),
-        Color.rgb(253, 248, 240),
-        Color.rgb(248, 244, 249),
-        Color.rgb(245, 247, 249)
+        Color.rgb(238, 235, 255),
+        Color.rgb(226, 250, 245),
+        Color.rgb(255, 239, 246),
+        Color.rgb(237, 244, 255),
+        Color.rgb(255, 246, 228),
+        Color.rgb(237, 244, 248)
     )
     private val notes = mutableListOf<Note>()
     private val categories = mutableListOf("کتابخانه", "کافی‌نت", "دانشگاه")
@@ -112,16 +107,15 @@ class MainActivity : Activity() {
     private var pickingImageForNoteId: String? = null
     private var voiceTargetNoteId: String? = null
     private var search = ""
-    private var pendingPermissionNoteId: String? = null
+    private var lastInsertedNoteId: String? = null
     private val titleFont by lazy { loadTypeface("fonts/far_vazir.ttf") }
-    private val textFont by lazy { loadTypeface("fonts/far_nazanin.ttf") }
+    private val textFont by lazy { loadTypeface("fonts/vazirmatn_regular.ttf") }
     private val dateFont by lazy { loadTypeface("fonts/a_rooznameh.ttf") }
 
     // Appearance preferences are kept separately from the user's notes.
     private var noteTextSize = 15
     private var inputTextSize = 14
     private var searchTextSize = 12
-    private var reminderTextSize = 11
     private var headerTextSize = 25
     // The home screen and the in-app note screen share one Activity, not an AlertDialog.
     private lateinit var screenRoot: FrameLayout
@@ -189,7 +183,6 @@ class MainActivity : Activity() {
         window.decorView.systemUiVisibility =
             View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-        ReminderEngine.createChannel(this)
         loadCategories()
         loadTabStyles()
         selectedCategory = getSharedPreferences("checklist_native", MODE_PRIVATE)
@@ -220,7 +213,6 @@ class MainActivity : Activity() {
         super.onResume()
         if (::dateLabel.isInitialized) {
             updateDate()
-            ReminderEngine.restore(this)
             syncVoiceDraft()
             refreshVoiceComposer()
             updatePageVoiceControls()
@@ -274,7 +266,7 @@ class MainActivity : Activity() {
             layoutDirection = View.LAYOUT_DIRECTION_RTL
             setBackgroundColor(surface)
         }
-        screenRoot = FrameLayout(this)
+        screenRoot = layoutInflater.inflate(R.layout.activity_main, null) as FrameLayout
         homePage = root
         screenRoot.addView(homePage, FrameLayout.LayoutParams(-1, -1))
         setContentView(screenRoot)
@@ -298,7 +290,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         headerTop.addView(heading, LinearLayout.LayoutParams(0, -1, 1f))
-        headingLabel = label("یادداشت‌های من", headerTextSize.toFloat(), ink, true).apply {
+        headingLabel = label("Novi", headerTextSize.toFloat(), ink, true).apply {
             typeface = titleFont
             maxLines = 1
         }
@@ -307,7 +299,7 @@ class MainActivity : Activity() {
         dateLabel = label("", 15f, Color.rgb(58, 77, 114), true).apply {
             typeface = titleFont
             gravity = Gravity.CENTER
-            background = shape(Color.rgb(236, 242, 255), 11, Color.rgb(215, 227, 250))
+            background = shape(Color.rgb(238, 235, 255), 12)
             setPadding(dp(11), dp(4), dp(11), dp(4))
             maxLines = 1
         }
@@ -337,7 +329,7 @@ class MainActivity : Activity() {
         val settingsButton = ImageButton(this).apply {
             setImageResource(R.drawable.ic_settings)
             imageTintList = ColorStateList.valueOf(muted)
-            background = shape(Color.rgb(248, 250, 252), 10, softBorder)
+            background = shape(Color.rgb(240, 239, 253), 13)
             setPadding(dp(10), dp(10), dp(10), dp(10))
             contentDescription = "تنظیمات و مدیریت سربرگ‌ها"
             setOnClickListener { showMainSettings() }
@@ -345,25 +337,12 @@ class MainActivity : Activity() {
         headerTop.addView(settingsButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
             marginStart = dp(10)
         })
-        // One additional independent control; all existing settings and notes remain intact.
-        val alarmButton = ImageButton(this).apply {
-            setImageResource(R.drawable.ic_alarm_clock)
-            imageTintList = ColorStateList.valueOf(muted)
-            background = shape(Color.rgb(248, 250, 252), 10, softBorder)
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            contentDescription = "آلارم"
-            setOnClickListener { com.ahbe.checklist.alarm.AlarmUi.show(this@MainActivity) }
-        }
-        headerTop.addView(alarmButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
-            marginStart = dp(6)
-        })
-
         categoryBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_RTL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), dp(4), dp(4), dp(4))
-            background = shape(Color.rgb(244, 246, 251), 13)
+            background = shape(Color.rgb(244, 243, 254), 18)
         }
         val categoryScroll = android.widget.HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
@@ -384,11 +363,11 @@ class MainActivity : Activity() {
         })
 
         searchField = EditText(this).apply {
-            hint = "جستجوی یادداشت..."
+            hint = "جست‌وجو در یادداشت‌ها"
             textSize = searchTextSize.toFloat()
             setTextColor(ink)
             setHintTextColor(Color.rgb(148, 163, 184))
-            background = shape(Color.rgb(248, 250, 252), 12, softBorder)
+            background = shape(Color.WHITE, 16)
             setSingleLine(true)
             setPadding(dp(11), 0, dp(11), 0)
             compoundDrawablePadding = dp(6)
@@ -411,7 +390,7 @@ class MainActivity : Activity() {
             isFillViewport = true
             clipToPadding = false
             isVerticalScrollBarEnabled = false
-            setPadding(dp(20), dp(16), dp(20), dp(20))
+            setPadding(dp(16), dp(15), dp(16), dp(22))
         }
         main.addView(scroll, FrameLayout.LayoutParams(-1, -1))
         noteList = LinearLayout(this).apply {
@@ -438,13 +417,7 @@ class MainActivity : Activity() {
         val composerCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_RTL
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.WHITE, Color.rgb(250, 252, 255))
-            ).apply {
-                cornerRadius = dp(24).toFloat()
-                setStroke(dp(1), Color.rgb(225, 232, 241))
-            }
+            background = shape(Color.WHITE, 25)
             elevation = dp(11).toFloat()
             clipToOutline = true
         }
@@ -469,29 +442,31 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(11), dp(10), dp(11), dp(10))
         }
-        composerCard.addView(bottom, LinearLayout.LayoutParams(-1, dp(72)))
+        composerCard.addView(bottom, LinearLayout.LayoutParams(-1, -2).apply { height = -2 })
         composerSpacerStart = View(this).apply { visibility = View.GONE }
         bottom.addView(composerSpacerStart, LinearLayout.LayoutParams(0, dp(1), 1f))
         input = EditText(this).apply {
-            hint = "یک کار جدید بنویس..."
+            hint = "یادداشت جدید..."
             textSize = inputTextSize.toFloat()
             setTextColor(ink)
             setHintTextColor(Color.rgb(148, 163, 184))
-            background = null
-            setSingleLine(true)
+            background = shape(Color.rgb(247, 247, 253), 19)
+            setSingleLine(false)
+            maxLines = 4
+            minimumHeight = dp(48)
             gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
             layoutDirection = View.LAYOUT_DIRECTION_RTL
-            setPadding(dp(11), 0, dp(11), 0)
-            imeOptions = EditorInfo.IME_ACTION_DONE
+            setPadding(dp(14), dp(9), dp(14), dp(9))
+            imeOptions = EditorInfo.IME_ACTION_SEND
             setOnEditorActionListener { _, action, _ ->
-                if (action == EditorInfo.IME_ACTION_DONE) {
+                if (action == EditorInfo.IME_ACTION_SEND) {
                     addNote()
                     true
                 } else false
             }
         }
         input.typeface = textFont
-        bottom.addView(input, LinearLayout.LayoutParams(0, -1, 1f))
+        bottom.addView(input, LinearLayout.LayoutParams(0, -2, 1f))
 
         recordingIndicator = View(this).apply {
             background = shape(Color.rgb(210, 64, 71), 7)
@@ -517,7 +492,7 @@ class MainActivity : Activity() {
         microphoneButton = ImageButton(this).apply {
             setImageResource(R.drawable.ic_microphone)
             imageTintList = ColorStateList.valueOf(muted)
-            background = shape(Color.rgb(242, 246, 250), 24, Color.rgb(225, 232, 240))
+            background = shape(Color.rgb(239, 237, 255), 24)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             setPadding(dp(12), dp(12), dp(12), dp(12))
             contentDescription = "ضبط پیام صوتی"
@@ -530,7 +505,7 @@ class MainActivity : Activity() {
         cancelAudioButton = ImageButton(this).apply {
             setImageResource(R.drawable.ic_close)
             imageTintList = ColorStateList.valueOf(Color.rgb(190, 73, 78))
-            background = shape(Color.rgb(255, 244, 244), 24, Color.rgb(249, 221, 223))
+            background = shape(Color.rgb(255, 237, 240), 24)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             setPadding(dp(12), dp(12), dp(12), dp(12))
             contentDescription = "لغو ضبط صدا"
@@ -544,7 +519,7 @@ class MainActivity : Activity() {
         sendButton = ImageButton(this).apply {
             setImageResource(R.drawable.ic_send_message)
             imageTintList = ColorStateList.valueOf(Color.WHITE)
-            background = shape(ink, 17)
+            background = shape(indigo, 19)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             setPadding(dp(12), dp(12), dp(12), dp(12))
             contentDescription = "افزودن یادداشت"
@@ -589,6 +564,10 @@ class MainActivity : Activity() {
                     persistSelectedCategory()
                     updateCategories()
                     renderNotes()
+                    noteList.animate().cancel()
+                    noteList.translationX = dp(14).toFloat()
+                    noteList.alpha = 0.7f
+                    noteList.animate().translationX(0f).alpha(1f).setDuration(230L).start()
                 }
             }
             val symbol = ImageView(this).apply {
@@ -621,15 +600,12 @@ class MainActivity : Activity() {
             val style = styleForCategory(category)
             val tone = tabColors[style.colorIndex]
             val active = category == selectedCategory
-            tab.background = shape(
-                if (active) Color.argb(40, Color.red(tone), Color.green(tone), Color.blue(tone))
-                else Color.argb(14, Color.red(tone), Color.green(tone), Color.blue(tone)),
-                10, if (active) tone else Color.argb(50, Color.red(tone), Color.green(tone), Color.blue(tone))
-            )
-            tab.alpha = if (active) 1f else 0.86f
-            tab.elevation = if (active) dp(2).toFloat() else 0f
-            (tab.getChildAt(0) as ImageView).imageTintList = ColorStateList.valueOf(tone)
-            (tab.getChildAt(1) as TextView).setTextColor(tone)
+            tab.background = shape(if (active) tone else Color.WHITE, 16)
+            tab.alpha = if (active) 1f else 0.9f
+            tab.elevation = if (active) dp(3).toFloat() else 0f
+            val foreground = if (active) Color.WHITE else tone
+            (tab.getChildAt(0) as ImageView).imageTintList = ColorStateList.valueOf(foreground)
+            (tab.getChildAt(1) as TextView).setTextColor(foreground)
         }
     }
 
@@ -1029,9 +1005,6 @@ class MainActivity : Activity() {
         val missing = mutableListOf<String>()
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
             missing.add(Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
-            missing.add(Manifest.permission.POST_NOTIFICATIONS)
         if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), 915)
     }
 
@@ -1068,166 +1041,182 @@ class MainActivity : Activity() {
         renderOpenNotePage()
     }
 
+    /**
+     * Message-like note bubbles shared by the inbox and nested note conversations.
+     * Clicking the bubble opens its note. Completion, attachments and deletion retain
+     * the original note persistence and media code paths.
+     */
     private fun addNoteCard(note: Note, index: Int, destination: LinearLayout = noteList) {
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(58)
-            setPadding(dp(13), dp(10), dp(9), dp(10))
-            background = shape(note.color, 16, Color.argb(12, 0, 0, 0))
-            elevation = dp(2).toFloat()
-            alpha = if (note.completed) 0.78f else 1f
-        }
-        destination.addView(card, LinearLayout.LayoutParams(-1, -2).apply {
-            bottomMargin = dp(12)
+        val bubbleTones = intArrayOf(
+            Color.rgb(235, 232, 255),
+            Color.rgb(224, 250, 244),
+            Color.rgb(255, 237, 246),
+            Color.rgb(229, 242, 255)
+        )
+        val accentTones = intArrayOf(
+            indigo, emerald, Color.rgb(214, 68, 128), Color.rgb(54, 115, 221)
+        )
+        val tone = accentTones[(index - 1).mod(accentTones.size)]
+        val row = FrameLayout(this)
+        destination.addView(row, LinearLayout.LayoutParams(-1, -2).apply {
+            bottomMargin = dp(7)
         })
-
-        val tapArea = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        val bubble = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(12), dp(7), dp(12), dp(7))
+            background = shape(bubbleTones[(index - 1).mod(bubbleTones.size)], 17)
+            elevation = dp(1).toFloat()
+            alpha = if (note.completed) 0.82f else 1f
             isClickable = true
             isFocusable = true
-            contentDescription = "بازکردن یادداشت " + note.text
+            contentDescription = "باز کردن یادداشت: " + note.text
             setOnClickListener { showNotePage(note) }
         }
-        card.addView(tapArea, LinearLayout.LayoutParams(0, -2, 1f))
-
-        tapArea.addView(label(fa(index) + "-", 14f, Color.rgb(148, 163, 184), true),
-            LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(7) })
-
-        val checkBox = FrameLayout(this).apply {
-            background = shape(if (note.completed) emerald else Color.WHITE, 6,
-                if (note.completed) emerald else Color.rgb(203, 213, 225))
-            isClickable = true
-            contentDescription = if (note.completed) "برگرداندن به جاری" else "علامت انجام"
-            setOnClickListener { toggleCompleted(note) }
-        }
-        tapArea.addView(checkBox, LinearLayout.LayoutParams(dp(22), dp(22)).apply {
-            marginEnd = dp(11)
+        row.addView(bubble, FrameLayout.LayoutParams(-1, -2, Gravity.RIGHT).apply {
+            marginStart = dp(8)
+            marginEnd = dp(8)
         })
-        if (note.completed) {
-            checkBox.addView(ImageView(this).apply {
-                setImageResource(R.drawable.ic_check)
-                imageTintList = ColorStateList.valueOf(Color.WHITE)
-            }, FrameLayout.LayoutParams(dp(17), dp(17), Gravity.CENTER))
+        val contentRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.TOP
         }
-
-        val noteTextColumn = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        tapArea.addView(noteTextColumn, LinearLayout.LayoutParams(0, -2, 1f))
-        val noteText = label(note.text, noteTextSize.toFloat(), if (note.completed) muted else ink, !note.completed).apply {
+        bubble.addView(contentRow, LinearLayout.LayoutParams(-1, -2))
+        val identity = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(2), 0, 0)
+        }
+        contentRow.addView(identity, LinearLayout.LayoutParams(-2, -2).apply {
+            marginEnd = dp(10)
+        })
+        identity.addView(View(this).apply {
+            background = shape(tone, 8)
+        }, LinearLayout.LayoutParams(dp(6), dp(6)).apply { marginEnd = dp(5) })
+        identity.addView(label(
+            if (note.completed) "انجام‌شده" else "یادداشت",
+            10f, tone, true
+        ).apply { typeface = titleFont })
+        val body = label(note.text, noteTextSize.toFloat(),
+            if (note.completed) muted else ink, false).apply {
             typeface = textFont
-            // Word-style paragraph justification for multi-line Persian text.
-            // Preserve the complete original text instead of squeezing it into two lines.
             maxLines = Int.MAX_VALUE
             ellipsize = null
-            gravity = Gravity.TOP or Gravity.RIGHT
+            gravity = Gravity.RIGHT or Gravity.TOP
             textDirection = View.TEXT_DIRECTION_FIRST_STRONG
             breakStrategy = android.text.Layout.BREAK_STRATEGY_HIGH_QUALITY
             justificationMode = android.text.Layout.JUSTIFICATION_MODE_INTER_WORD
-            setLineSpacing(dp(4).toFloat(), 1.12f)
-            includeFontPadding = true
-            setPadding(dp(3), dp(5), dp(3), dp(5))
+            setLineSpacing(dp(1).toFloat(), 1.05f)
+            setPadding(0, 0, 0, 0)
             if (note.completed) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
         }
-        noteTextColumn.addView(noteText, LinearLayout.LayoutParams(-1, -2))
+        contentRow.addView(body, LinearLayout.LayoutParams(0, -2, 1f))
+        // A single compact metadata line instead of multiple stacked rows.
+        val descendants = notes.count { it.parentId == note.id }
+        val detailParts = mutableListOf<String>()
         note.dueAt?.let { due ->
-            noteTextColumn.addView(label("تاریخ اجرا: " + formatDueDate(due), 12f,
-                Color.rgb(195, 45, 52), true).apply { typeface = textFont },
-                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) })
+            detailParts.add("تاریخ اجرا: " + formatDueDate(due))
         }
-        val countChildren = notes.count { it.parentId == note.id }
-        if (countChildren > 0 || note.imageFilenames.isNotEmpty() || note.audioAttachments.isNotEmpty()) {
-            noteTextColumn.addView(
-                label("زیرشاخه: " + fa(countChildren) + "  |  عکس: " +
-                    fa(note.imageFilenames.size) + "  |  صوت: " +
-                    fa(note.audioAttachments.size), 11f, indigo),
-                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) }
-            )
+        if (descendants > 0 || note.imageFilenames.isNotEmpty() ||
+            note.audioAttachments.isNotEmpty()) {
+            detailParts.add("زیرشاخه " + fa(descendants) +
+                " · تصویر " + fa(note.imageFilenames.size) +
+                " · صوت " + fa(note.audioAttachments.size))
         }
+        if (note.audioFilename != null) detailParts.add("پیام صوتی")
         if (note.audioFilename != null) {
-            val audioBadge = label("یادداشت صوتی", 10f, indigo, true).apply {
-                background = shape(Color.rgb(237, 240, 255), 8)
-                setPadding(dp(8), dp(4), dp(8), dp(4))
-            }
-            noteTextColumn.addView(audioBadge,
-                LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(5) })
-
-            val playback = LinearLayout(this).apply {
+            val preview = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 layoutDirection = View.LAYOUT_DIRECTION_RTL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(5), dp(4), dp(10), dp(4))
-                background = shape(Color.rgb(248, 249, 255), 13, Color.rgb(230, 233, 250))
+                setPadding(dp(6), dp(3), dp(6), dp(3))
+                background = shape(Color.argb(175, 255, 255, 255), 13)
             }
-            val isPlaying = playingNoteId == note.id
-            val play = ImageButton(this).apply {
-                setImageResource(if (isPlaying) R.drawable.ic_pause_voice else R.drawable.ic_play_voice)
-                imageTintList = ColorStateList.valueOf(indigo)
-                background = shape(Color.WHITE, 18, Color.rgb(231, 234, 250))
-                setPadding(dp(9), dp(9), dp(9), dp(9))
-                contentDescription = if (isPlaying) "توقف پخش" else "پخش " + note.text
+            bubble.addView(preview, LinearLayout.LayoutParams(-1, -2))
+            preview.addView(ImageButton(this).apply {
+                setImageResource(if (playingNoteId == note.id)
+                    R.drawable.ic_pause_voice else R.drawable.ic_play_voice)
+                imageTintList = ColorStateList.valueOf(tone)
+                background = shape(Color.WHITE, 14)
+                contentDescription = "پخش یا توقف پیام صوتی"
+                setPadding(dp(8), dp(8), dp(8), dp(8))
                 setOnClickListener { toggleVoicePlayback(note) }
-            }
-            playback.addView(play, LinearLayout.LayoutParams(dp(36), dp(36)))
-            playback.addView(ImageView(this).apply {
-                setImageResource(R.drawable.ic_waveform)
-                imageTintList = ColorStateList.valueOf(indigo)
-                contentDescription = "موج صدای ضبط‌شده"
-            }, LinearLayout.LayoutParams(dp(20), dp(20)).apply {
-                marginStart = dp(10)
-            })
-            playback.addView(label(formatDuration(note.audioDurationMs), 12f, muted, true),
-                LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(7) })
-            noteTextColumn.addView(playback,
-                LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(5) })
-            noteTextColumn.addView(voiceActionBar(note.audioFilename),
-                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+            }, LinearLayout.LayoutParams(dp(36), dp(36)))
+            preview.addView(label(formatDuration(note.audioDurationMs), 12f, muted),
+                LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(10) })
+            bubble.addView(voiceActionBar(note.audioFilename),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         }
-        val reminderTime = note.reminderAt
-        if (reminderTime != null && reminderTime > System.currentTimeMillis()) {
-            val scheduled = SimpleDateFormat("d MMMM yyyy، HH:mm",
-                ULocale("fa_IR@calendar=persian")).format(Date(reminderTime))
-            noteTextColumn.addView(
-                label("یادآوری: " + scheduled, reminderTextSize.toFloat(), indigo).apply {
-                    typeface = textFont
-                },
-                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) }
-            )
+        // The action buttons share one footer with any available metadata.
+        val footer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(3), 0, 0)
         }
-        val bell = ImageButton(this).apply {
-            setImageResource(R.drawable.ic_bell)
-            imageTintList = ColorStateList.valueOf(if (reminderTime != null) indigo else muted)
-            background = shape(if (reminderTime != null) Color.rgb(224, 231, 255)
-                    else Color.argb(160, 255, 255, 255), 10)
+        bubble.addView(footer, LinearLayout.LayoutParams(-1, -2))
+        footer.addView(label(detailParts.joinToString("  ·  "), 10f, muted).apply {
+            typeface = textFont
+            maxLines = 2
+            gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
+            setPadding(0, 0, dp(4), 0)
+            visibility = if (detailParts.isEmpty()) View.INVISIBLE else View.VISIBLE
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        footer.addView(controls, LinearLayout.LayoutParams(-2, -2))
+        val complete = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_check)
+            imageTintList = ColorStateList.valueOf(if (note.completed)
+                Color.WHITE else tone)
+            background = shape(if (note.completed) emerald else Color.WHITE, 13)
             setPadding(dp(9), dp(9), dp(9), dp(9))
-            contentDescription = "تنظیم اعلان " + note.text
-            setOnClickListener { startReminderSetup(note) }
+            contentDescription = if (note.completed) "بازگرداندن یادداشت" else "علامت انجام"
+            setOnClickListener { toggleCompleted(note) }
         }
-        card.addView(bell, LinearLayout.LayoutParams(dp(37), dp(37)).apply {
-            marginStart = dp(7)
-        })
-
-        val remove = ImageButton(this).apply {
+        controls.addView(complete, LinearLayout.LayoutParams(dp(38), dp(38)))
+        controls.addView(label("جزئیات", 11f, tone, true).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(9), 0, dp(9), 0)
+            isClickable = true
+            setOnClickListener { showNotePage(note) }
+        }, LinearLayout.LayoutParams(-2, dp(38)))
+        controls.addView(ImageButton(this).apply {
             setImageResource(R.drawable.ic_trash)
-            imageTintList = ColorStateList.valueOf(Color.rgb(148, 163, 184))
-            background = shape(Color.argb(155, 255, 255, 255), 10)
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            contentDescription = "حذف " + note.text
+            imageTintList = ColorStateList.valueOf(Color.rgb(163, 75, 106))
+            background = shape(Color.argb(180, 255, 255, 255), 13)
+            setPadding(dp(9), dp(9), dp(9), dp(9))
+            contentDescription = "حذف یادداشت " + note.text
             setOnClickListener {
-                isEnabled = false
-                card.animate().alpha(0f).scaleX(0.96f).scaleY(0.9f).setDuration(200L)
-                    .withEndAction {
-                        ReminderEngine.cancel(this@MainActivity, note.id)
-                        PhoneCalendarStore.deleteEvent(this@MainActivity, note.calendarEventId)
-                        removeNoteTree(note)
-                        saveNotes()
-                        renderNotes()
-                    }.start()
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("حذف یادداشت")
+                    .setMessage("این یادداشت و زیرشاخه‌های آن حذف شوند؟")
+                    .setNegativeButton("انصراف", null)
+                    .setPositiveButton("حذف") { _, _ ->
+                        row.animate().alpha(0f).scaleX(0.96f).setDuration(160L)
+                            .withEndAction {
+                                removeNoteTree(note)
+                                saveNotes()
+                                renderNotes()
+                            }.start()
+                    }.show()
+            }
+        }, LinearLayout.LayoutParams(dp(38), dp(38)))
+        if (lastInsertedNoteId == note.id) {
+            lastInsertedNoteId = null
+            row.alpha = 0f
+            row.translationY = dp(18).toFloat()
+            row.post {
+                row.animate().alpha(1f).translationY(0f).setDuration(260L)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator())
+                    .start()
             }
         }
-        card.addView(remove, LinearLayout.LayoutParams(dp(36), dp(36)).apply {
-            marginStart = dp(8)
-        })
     }
 
     /**
@@ -1238,6 +1227,12 @@ class MainActivity : Activity() {
         if (notes.none { it.id == note.id }) return
         currentPageNoteId = note.id
         renderOpenNotePage()
+        notePage?.apply {
+            translationX = dp(35).toFloat()
+            alpha = 0f
+            animate().translationX(0f).alpha(1f).setDuration(245L)
+                .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+        }
     }
 
     private fun renderOpenNotePage() {
@@ -1316,8 +1311,9 @@ class MainActivity : Activity() {
             val voiceCard = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 layoutDirection = View.LAYOUT_DIRECTION_RTL
-                setPadding(dp(12), dp(11), dp(12), dp(11))
-                background = shape(Color.WHITE, 13, softBorder)
+                setPadding(dp(16), dp(13), dp(16), dp(13))
+                background = shape(Color.rgb(233, 247, 255), 20)
+                elevation = dp(2).toFloat()
             }
             list.addView(voiceCard, LinearLayout.LayoutParams(-1, -2).apply {
                 bottomMargin = dp(9)
@@ -1406,8 +1402,9 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_RTL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), dp(7), dp(8), dp(7))
-            background = shape(Color.WHITE, 16, softBorder)
+            setPadding(dp(9), dp(9), dp(9), dp(9))
+            background = shape(Color.WHITE, 23)
+            elevation = dp(5).toFloat()
         }
         page.addView(composer, LinearLayout.LayoutParams(-1, -2).apply {
             marginStart = dp(16)
@@ -1416,20 +1413,22 @@ class MainActivity : Activity() {
             bottomMargin = dp(8)
         })
         val entryField = EditText(this).apply {
-            hint = "یک مورد جدید بنویس..."
-            setSingleLine(true)
+            hint = "پیام جدید..."
+            setSingleLine(false)
+            maxLines = 4
             textSize = 14f
             typeface = textFont
             setTextColor(ink)
             setHintTextColor(muted)
-            background = null
-            setPadding(dp(8), 0, dp(8), 0)
-            imeOptions = EditorInfo.IME_ACTION_DONE
+            background = shape(Color.rgb(247, 247, 253), 17)
+            setPadding(dp(12), dp(9), dp(12), dp(9))
+            minimumHeight = dp(46)
+            imeOptions = EditorInfo.IME_ACTION_SEND
         }
-        composer.addView(entryField, LinearLayout.LayoutParams(0, dp(45), 1f))
+        composer.addView(entryField, LinearLayout.LayoutParams(0, -2, 1f))
         val mic = ImageButton(this).apply {
             setImageResource(R.drawable.ic_microphone)
-            background = shape(Color.rgb(240, 245, 251), 12, softBorder)
+            background = shape(Color.rgb(237, 235, 255), 17)
             imageTintList = ColorStateList.valueOf(indigo)
             setPadding(dp(11), dp(11), dp(11), dp(11))
             contentDescription = "ضبط صدا در این یادداشت"
@@ -1442,7 +1441,7 @@ class MainActivity : Activity() {
         val send = ImageButton(this).apply {
             setImageResource(R.drawable.ic_send_message)
             imageTintList = ColorStateList.valueOf(Color.WHITE)
-            background = shape(ink, 12)
+            background = shape(indigo, 17)
             setPadding(dp(11), dp(11), dp(11), dp(11))
             contentDescription = "ارسال متن یا صدای یادداشت"
         }
@@ -1460,9 +1459,11 @@ class MainActivity : Activity() {
                     if (value.isEmpty()) {
                         entryField.error = "متن را بنویس یا میکروفون را بزن"
                     } else {
-                        notes.add(Note(UUID.randomUUID().toString(), value, false,
+                        val added = Note(UUID.randomUUID().toString(), value, false,
                             palette[Random.nextInt(palette.size)],
-                            category = note.category, parentId = note.id))
+                            category = note.category, parentId = note.id)
+                        notes.add(added)
+                        lastInsertedNoteId = added.id
                         saveNotes()
                         renderNotes()
                     }
@@ -1471,7 +1472,7 @@ class MainActivity : Activity() {
         }
         send.setOnClickListener { submitPageEntry() }
         entryField.setOnEditorActionListener { _, action, _ ->
-            if (action == EditorInfo.IME_ACTION_DONE) {
+            if (action == EditorInfo.IME_ACTION_SEND) {
                 submitPageEntry()
                 true
             } else false
@@ -1488,7 +1489,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             isClickable = true
             isFocusable = true
-            background = shape(Color.rgb(237, 243, 255), 11, softBorder)
+            background = shape(Color.rgb(237, 235, 255), 16)
             setPadding(dp(8), dp(9), dp(8), dp(9))
             setOnClickListener { pickImageForNote(note) }
         }, LinearLayout.LayoutParams(-1, -2).apply {
@@ -1585,25 +1586,21 @@ class MainActivity : Activity() {
         pageVoiceButton = null
         pageVoiceStatus = null
         pageSendButton = null
-        if (::homePage.isInitialized) homePage.visibility = View.VISIBLE
+        if (::homePage.isInitialized) {
+            homePage.visibility = View.VISIBLE
+            homePage.alpha = 0.75f
+            homePage.animate().alpha(1f).setDuration(200L).start()
+        }
     }
 
     private fun toggleCompleted(note: Note) {
         note.completed = !note.completed
-        if (note.completed && note.reminderAt != null) {
-            ReminderEngine.cancel(this, note.id)
-            PhoneCalendarStore.deleteEvent(this, note.calendarEventId)
-            note.calendarEventId = null
-            note.reminderAt = null
-        }
         saveNotes()
         renderNotes()
     }
 
     private fun removeNoteTree(note: Note) {
         notes.filter { it.parentId == note.id }.toList().forEach { removeNoteTree(it) }
-        ReminderEngine.cancel(this, note.id)
-        PhoneCalendarStore.deleteEvent(this, note.calendarEventId)
         if (playingNoteId == note.id) stopPlayback()
         note.audioFilename?.let { storedAudioFile(it)?.delete() }
         note.audioAttachments.forEach { storedAudioFile(it.filename)?.delete() }
@@ -1982,9 +1979,11 @@ class MainActivity : Activity() {
             if (value.isEmpty()) {
                 childInput.error = "متن را بنویس"
             } else {
-                notes.add(Note(UUID.randomUUID().toString(), value, false,
+                val added = Note(UUID.randomUUID().toString(), value, false,
                     palette[Random.nextInt(palette.size)],
-                    category = note.category, parentId = note.id, dueAt = draftDueAt))
+                    category = note.category, parentId = note.id, dueAt = draftDueAt)
+                notes.add(added)
+                lastInsertedNoteId = added.id
                 saveNotes()
                 renderNotes()
                 detail.dismiss()
@@ -2267,10 +2266,6 @@ class MainActivity : Activity() {
             }
             return
         }
-        if (requestCode == com.ahbe.checklist.alarm.AlarmUi.PICK_AUDIO) {
-            if (resultCode == RESULT_OK) com.ahbe.checklist.alarm.AlarmUi.receivePickedAudio(this, data)
-            return
-        }
         if (requestCode == 2016) {
             val prefs = getSharedPreferences("checklist_native", MODE_PRIVATE)
             val filename = prefs.getString("pending_audio_save", null)
@@ -2461,7 +2456,10 @@ class MainActivity : Activity() {
         }
         val text = input.text.toString().trim()
         if (text.isEmpty()) return
-        notes.add(Note(UUID.randomUUID().toString(), text, false, palette[Random.nextInt(palette.size)], category = selectedCategory))
+        val added = Note(UUID.randomUUID().toString(), text, false,
+            palette[Random.nextInt(palette.size)], category = selectedCategory)
+        notes.add(added)
+        lastInsertedNoteId = added.id
         saveNotes()
         input.text.clear()
         renderNotes()
@@ -2469,154 +2467,12 @@ class MainActivity : Activity() {
     }
 
 
-    private fun showReminderDialog(note: Note) {
-        if (note.completed) {
-            Toast.makeText(this, "برای تنظیم اعلان، ابتدا یادداشت را به حالت جاری برگردانید", Toast.LENGTH_LONG).show()
-            return
-        }
-        val months = arrayOf("فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
-            "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند")
-        val persian = PersianIcuCalendar.getInstance(ULocale("fa_IR@calendar=persian"))
-        note.reminderAt?.let { persian.timeInMillis = it }
-        val currentYear = PersianIcuCalendar.getInstance(
-            ULocale("fa_IR@calendar=persian")).get(PersianIcuCalendar.YEAR)
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-            gravity = Gravity.CENTER
-            setPadding(dp(9), dp(12), dp(9), dp(4))
-        }
-        val year = NumberPicker(this).apply {
-            minValue = currentYear
-            maxValue = currentYear + 10
-            value = persian.get(PersianIcuCalendar.YEAR).coerceIn(minValue, maxValue)
-            wrapSelectorWheel = false
-            descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
-        }
-        val month = NumberPicker(this).apply {
-            minValue = 1
-            maxValue = 12
-            displayedValues = months
-            value = persian.get(PersianIcuCalendar.MONTH) + 1
-            wrapSelectorWheel = false
-            descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
-        }
-        val day = NumberPicker(this).apply {
-            minValue = 1
-            maxValue = 31
-            value = persian.get(PersianIcuCalendar.DAY_OF_MONTH)
-            wrapSelectorWheel = false
-            descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
-        }
-        fun limitDay() {
-            val c = PersianIcuCalendar.getInstance(ULocale("fa_IR@calendar=persian"))
-            c.set(PersianIcuCalendar.YEAR, year.value)
-            c.set(PersianIcuCalendar.MONTH, month.value - 1)
-            c.set(PersianIcuCalendar.DAY_OF_MONTH, 1)
-            day.maxValue = c.getActualMaximum(PersianIcuCalendar.DAY_OF_MONTH)
-        }
-        year.setOnValueChangedListener { _, _, _ -> limitDay() }
-        month.setOnValueChangedListener { _, _, _ -> limitDay() }
-        limitDay()
-        row.addView(day, LinearLayout.LayoutParams(0, dp(157), 1f))
-        row.addView(month, LinearLayout.LayoutParams(0, dp(157), 1.45f))
-        row.addView(year, LinearLayout.LayoutParams(0, dp(157), 1.15f))
-        AlertDialog.Builder(this)
-            .setTitle("تاریخ اعلان")
-            .setMessage(note.text)
-            .setView(row)
-            .setNegativeButton("انصراف", null)
-            .setNeutralButton("حذف اعلان") { _, _ ->
-                ReminderEngine.cancel(this, note.id)
-                PhoneCalendarStore.deleteEvent(this, note.calendarEventId)
-                note.calendarEventId = null
-                note.reminderAt = null
-                saveNotes()
-                renderNotes()
-            }
-            .setPositiveButton("انتخاب ساعت") { _, _ ->
-                val initial = java.util.Calendar.getInstance().apply {
-                    timeInMillis = note.reminderAt ?: System.currentTimeMillis()
-                }
-                TimePickerDialog(this, { _, hour, minute ->
-                    val target = PersianIcuCalendar.getInstance(
-                        ULocale("fa_IR@calendar=persian"))
-                    target.isLenient = false
-                    target.clear()
-                    target.set(year.value, month.value - 1, day.value, hour, minute, 0)
-                    target.set(PersianIcuCalendar.MILLISECOND, 0)
-                    val timestamp = runCatching { target.timeInMillis }.getOrNull()
-                    if (timestamp == null || timestamp <= System.currentTimeMillis()) {
-                        Toast.makeText(this, "تاریخ و زمان باید در آینده باشد", Toast.LENGTH_LONG).show()
-                        return@TimePickerDialog
-                    }
-                    val newEventId = PhoneCalendarStore.saveEvent(
-                        this, note.text, timestamp, note.calendarEventId
-                    )
-                    note.reminderAt = timestamp
-                    if (newEventId != null) {
-                        note.calendarEventId = newEventId
-                        Toast.makeText(this, "یادداشت در تقویم گوشی ثبت شد", Toast.LENGTH_LONG).show()
-                    } else if (!PhoneCalendarStore.hasPermissions(this)) {
-                        Toast.makeText(this, "اعلان داخل برنامه تنظیم شد؛ برای ثبت در تقویم گوشی، مجوز تقویم را فعال کنید", Toast.LENGTH_LONG).show()
-                    } else {
-                        Toast.makeText(this, "یادآوری داخل برنامه تنظیم شد؛ تقویم گوشی در دسترس یا قابل‌نوشتن نیست", Toast.LENGTH_LONG).show()
-                    }
-                    saveNotes()
-                    ReminderEngine.schedule(this, note.id, note.text, timestamp)
-                    renderNotes()
-                    showMissingReminderAccessOptions()
-                }, initial.get(java.util.Calendar.HOUR_OF_DAY),
-                    initial.get(java.util.Calendar.MINUTE), true).show()
-            }
-            .show()
-    }
-
-    private fun startReminderSetup(note: Note) {
-        if (note.completed) {
-            Toast.makeText(this, "برای تنظیم اعلان، ابتدا یادداشت را به حالت جاری برگردانید", Toast.LENGTH_LONG).show()
-            return
-        }
-        val missing = mutableListOf<String>()
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
-            android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            missing.add(android.Manifest.permission.POST_NOTIFICATIONS)
-        }
-        if (Build.VERSION.SDK_INT >= 23) {
-            if (checkSelfPermission(android.Manifest.permission.READ_CALENDAR) !=
-                android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                missing.add(android.Manifest.permission.READ_CALENDAR)
-            }
-            if (checkSelfPermission(android.Manifest.permission.WRITE_CALENDAR) !=
-                android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                missing.add(android.Manifest.permission.WRITE_CALENDAR)
-            }
-        }
-        if (missing.isNotEmpty()) {
-            pendingPermissionNoteId = note.id
-            requestPermissions(missing.toTypedArray(), 811)
-        } else {
-            showReminderDialog(note)
-        }
-    }
-
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == com.ahbe.checklist.alarm.AlarmUi.LOCATION_PERMISSION) {
-            com.ahbe.checklist.alarm.AlarmUi.onLocationPermissionResult(
-                grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)
-            return
-        }
-        if (requestCode == com.ahbe.checklist.alarm.AlarmUi.MIC_PERMISSION) {
-            com.ahbe.checklist.alarm.AlarmUi.onMicPermissionResult(
-                grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)
-            return
-        }
         if (requestCode == 912) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 startVoiceRecording()
@@ -2625,81 +2481,7 @@ class MainActivity : Activity() {
             }
             return
         }
-        if (requestCode == 811) {
-            val noteId = pendingPermissionNoteId
-            pendingPermissionNoteId = null
-            val note = notes.firstOrNull { it.id == noteId } ?: return
-            if (Build.VERSION.SDK_INT >= 33 &&
-                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
-                android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "مجوز اعلان داده نشد؛ یادآوری داخل برنامه ذخیره می‌شود اما ممکن است اعلان نمایش داده نشود", Toast.LENGTH_LONG).show()
-            }
-            if (!PhoneCalendarStore.hasPermissions(this)) {
-                Toast.makeText(this, "بدون مجوز تقویم، رویداد در تقویم اصلی گوشی ثبت نمی‌شود", Toast.LENGTH_LONG).show()
-            }
-            showReminderDialog(note)
-        }
     }
-
-    private fun showMissingReminderAccessOptions() {
-        val notificationMissing = Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
-            android.content.pm.PackageManager.PERMISSION_GRANTED
-        val exactMissing = Build.VERSION.SDK_INT >= 31 &&
-            !(getSystemService(Context.ALARM_SERVICE) as AlarmManager).canScheduleExactAlarms()
-        if (!notificationMissing && !exactMissing) return
-
-        val message = when {
-            notificationMissing && exactMissing ->
-                "برای نمایش اعلان و اجرای آن در ساعت دقیق، دسترسی‌های زیر را بررسی کن."
-            notificationMissing ->
-                "اعلان‌های این برنامه مسدود هستند. برای دیدن یادآوری‌ها، اجازه اعلان را فعال کن."
-            else ->
-                "زنگ دقیق فعال نیست؛ اندروید ممکن است یادآوری را با تأخیر اجرا کند."
-        }
-        val builder = AlertDialog.Builder(this)
-            .setTitle("تنظیم دسترسی یادآوری")
-            .setMessage(message)
-            .setNegativeButton("بعداً", null)
-        if (notificationMissing) {
-            builder.setPositiveButton("تنظیم اعلان‌ها") { _, _ ->
-                runCatching {
-                    startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                        putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-                    })
-                }
-            }
-        }
-        if (exactMissing) {
-            builder.setNeutralButton("تنظیم زنگ دقیق") { _, _ ->
-                runCatching {
-                    startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
-                        .setData(Uri.parse("package:$packageName")))
-                }
-            }
-        }
-        builder.show()
-    }
-
-    private fun promptPreciseAlarmPermission() {
-        if (Build.VERSION.SDK_INT >= 31) {
-            val manager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            if (!manager.canScheduleExactAlarms()) {
-                AlertDialog.Builder(this)
-                    .setTitle("دسترسی زمان‌بندی دقیق")
-                    .setMessage("برای نمایش اعلان دقیقاً در زمان انتخابی، دسترسی «Alarms & reminders» را فعال کنید. بدون آن، اعلان ممکن است با تأخیر نمایش داده شود.")
-                    .setPositiveButton("تنظیم دسترسی") { _, _ ->
-                        runCatching {
-                            startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
-                                .setData(Uri.parse("package:$packageName")))
-                        }
-                    }
-                    .setNegativeButton("بعداً", null)
-                    .show()
-            }
-        }
-    }
-
 
     private fun formatDuration(durationMs: Long): String {
         val totalSeconds = (durationMs.coerceAtLeast(0L) / 1000L)
@@ -2986,7 +2768,6 @@ class MainActivity : Activity() {
         noteTextSize = prefs.getInt("noteTextSize", 15).coerceIn(12, 24)
         inputTextSize = prefs.getInt("inputTextSize", 14).coerceIn(12, 22)
         searchTextSize = prefs.getInt("searchTextSize", 12).coerceIn(10, 18)
-        reminderTextSize = prefs.getInt("reminderTextSize", 11).coerceIn(9, 16)
         headerTextSize = prefs.getInt("headerTextSize", 25).coerceIn(18, 30)
     }
 
@@ -2995,7 +2776,6 @@ class MainActivity : Activity() {
             .putInt("noteTextSize", noteTextSize)
             .putInt("inputTextSize", inputTextSize)
             .putInt("searchTextSize", searchTextSize)
-            .putInt("reminderTextSize", reminderTextSize)
             .putInt("headerTextSize", headerTextSize)
             .apply()
     }
@@ -3070,7 +2850,6 @@ class MainActivity : Activity() {
         var noteSize = noteTextSize
         var inputSize = inputTextSize
         var searchSize = searchTextSize
-        var reminderSize = reminderTextSize
         var headerSize = headerTextSize
 
         val content = LinearLayout(this).apply {
@@ -3084,9 +2863,8 @@ class MainActivity : Activity() {
         }
 
         addSizeControl(content, "اندازه متن یادداشت‌ها", 12, 24, noteSize) { noteSize = it }
-        addSizeControl(content, "اندازه متن افزودن کار", 12, 22, inputSize) { inputSize = it }
+        addSizeControl(content, "اندازه متن نوشتن یادداشت", 12, 22, inputSize) { inputSize = it }
         addSizeControl(content, "اندازه متن جست‌وجو", 10, 18, searchSize) { searchSize = it }
-        addSizeControl(content, "اندازه متن یادآوری", 9, 16, reminderSize) { reminderSize = it }
         addSizeControl(content, "اندازه عنوان برنامه", 18, 30, headerSize) { headerSize = it }
 
         AlertDialog.Builder(this)
@@ -3097,7 +2875,6 @@ class MainActivity : Activity() {
                 noteTextSize = 15
                 inputTextSize = 14
                 searchTextSize = 12
-                reminderTextSize = 11
                 headerTextSize = 25
                 saveAppearanceSettings()
                 applyAppearanceSettings()
@@ -3107,7 +2884,6 @@ class MainActivity : Activity() {
                 noteTextSize = noteSize
                 inputTextSize = inputSize
                 searchTextSize = searchSize
-                reminderTextSize = reminderSize
                 headerTextSize = headerSize
                 saveAppearanceSettings()
                 applyAppearanceSettings()
@@ -3128,8 +2904,6 @@ class MainActivity : Activity() {
                     obj.getString("text"),
                     obj.optBoolean("completed", false),
                     obj.optInt("color", palette[i % palette.size]),
-                    obj.optLong("reminderAt", 0L).takeIf { it > 0L },
-                    obj.optLong("calendarEventId", 0L).takeIf { it > 0L },
                     obj.optString("audioFilename", "").takeIf { it.isNotEmpty() },
                     obj.optLong("audioDurationMs", 0L).coerceAtLeast(0L),
                     category = obj.optString("category", "کتابخانه").ifBlank { "کتابخانه" },
@@ -3175,8 +2949,6 @@ class MainActivity : Activity() {
                 put("text", it.text)
                 put("completed", it.completed)
                 put("color", it.color)
-                put("reminderAt", it.reminderAt ?: 0L)
-                put("calendarEventId", it.calendarEventId ?: 0L)
                 put("audioFilename", it.audioFilename ?: "")
                 put("audioDurationMs", it.audioDurationMs)
                 put("category", it.category)

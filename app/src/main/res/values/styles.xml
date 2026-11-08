@@ -4,10 +4,10 @@
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:statusBarColor">#FFFFFF</item>
-        <item name="android:navigationBarColor">#F4F7F6</item>
-        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:navigationBarColor">@color/novi_background</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowSoftInputMode">adjustResize</item>
-        <item name="android:windowBackground">#F4F7F6</item>
+        <item name="android:windowBackground">@color/novi_background</item>
+        <item name="android:windowActionModeOverlay">true</item>
     </style>
 </resources>
