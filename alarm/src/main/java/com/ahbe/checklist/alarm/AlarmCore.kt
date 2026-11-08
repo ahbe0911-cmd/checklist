@@ -85,17 +85,22 @@ object AlarmStore {
     }
     fun location(c:Context):Triple<Double,Double,String>? {
         val p=prefs(c);if(!p.contains("lat"))return null
-        return Triple(java.lang.Double.longBitsToDouble(p.getLong("lat",0)),
-            java.lang.Double.longBitsToDouble(p.getLong("lon",0)),
+        val lat=java.lang.Double.longBitsToDouble(p.getLong("lat",0))
+        val lon=java.lang.Double.longBitsToDouble(p.getLong("lon",0))
+        if(!lat.isFinite() || !lon.isFinite() || lat !in -90.0..90.0 || lon !in -180.0..180.0)return null
+        return Triple(lat,lon,
             p.getString("zone",TimeZone.getDefault().id) ?: TimeZone.getDefault().id)
     }
     fun locationLabel(c:Context) = prefs(c).getString("place","مختصات ذخیره‌شده") ?: "مختصات ذخیره‌شده"
-    fun setLocation(c:Context,lat:Double,lon:Double,zone:String,label:String) {
+    fun isAutomaticLocation(c:Context) = prefs(c).getString("location_source","manual")=="auto"
+    fun setLocation(c:Context,lat:Double,lon:Double,zone:String,label:String,
+                    source:String="manual") {
         require(lat in -90.0..90.0 && lon in -180.0..180.0)
         ZoneId.of(zone)
         prefs(c).edit().putLong("lat",java.lang.Double.doubleToRawLongBits(lat))
             .putLong("lon",java.lang.Double.doubleToRawLongBits(lon))
-            .putString("zone",zone).putString("place",label).commit()
+            .putString("zone",zone).putString("place",label)
+            .putString("location_source",source).commit()
         read(c).filter { it.sunrise }.forEach { AlarmScheduler.schedule(c,it) }
     }
 }
@@ -127,6 +132,10 @@ object SolarMath {
 }
 object AlarmScheduler {
     const val FIRE="com.ahbe.checklist.alarm.FIRE"
+    fun hasExactPermission(c:Context):Boolean {
+        val manager=c.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        return Build.VERSION.SDK_INT<31 || manager.canScheduleExactAlarms()
+    }
     private fun intent(c:Context,id:String,snooze:Boolean=false)=Intent(c,AlarmTriggerReceiver::class.java).apply {
         action=FIRE
         data=Uri.parse("alarmclock://"+(if(snooze)"snooze/" else "main/")+Uri.encode(id))
@@ -198,18 +207,21 @@ object AlarmScheduler {
         val list=AlarmStore.read(c);val index=list.indexOfFirst {it.id==item.id}
         if(index>=0){list[index]=item;AlarmStore.save(c,list)}
         if(item.next<=0)return
+        if(!hasExactPermission(c)) {
+            item.next=0
+            val pendingList=AlarmStore.read(c)
+            val idx=pendingList.indexOfFirst{it.id==item.id}
+            if(idx>=0){pendingList[idx]=item;AlarmStore.save(c,pendingList)}
+            return
+        }
         val fire=pending(c,item.id)
         try {
             val open=PendingIntent.getActivity(c,item.id.hashCode(),
                 Intent(c,AlarmRingActivity::class.java).putExtra("alarm_id",item.id),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            if(Build.VERSION.SDK_INT<31 || mgr.canScheduleExactAlarms()) {
-                mgr.setAlarmClock(AlarmManager.AlarmClockInfo(item.next,open),fire)
-            } else {
-                mgr.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,item.next,fire)
-            }
-        }catch(_:SecurityException) {
-            mgr.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,item.next,fire)
+            mgr.setAlarmClock(AlarmManager.AlarmClockInfo(item.next,open),fire)
+        }catch(e:SecurityException) {
+            android.util.Log.e("AlarmScheduler","Exact alarm permission denied for "+item.id,e)
         }
     }
     fun cancel(c:Context,id:String) {
@@ -219,15 +231,39 @@ object AlarmScheduler {
             mgr.cancel(p);p.cancel()
         }
     }
+    fun scheduleTest(c:Context,delaySeconds:Int=15):Boolean {
+        if(!hasExactPermission(c))return false
+        val id="alarm-diagnostic-test"
+        cancel(c,id)
+        val test=AlarmItem(id=id,title="آزمایش صدای زنگ",repeat=0,
+            enabled=true,gradual=false,sound="preset:3",
+            next=System.currentTimeMillis()+delaySeconds.coerceAtLeast(5)*1000L)
+        val alarms=AlarmStore.read(c).filterNot {it.id==id}.toMutableList()
+        alarms.add(test)
+        AlarmStore.save(c,alarms)
+        val manager=c.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val open=PendingIntent.getActivity(c,id.hashCode(),
+            Intent(c,AlarmRingActivity::class.java).putExtra("alarm_id",id),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        return try{
+            manager.setAlarmClock(AlarmManager.AlarmClockInfo(test.next,open),pending(c,id))
+            true
+        }catch(e:SecurityException){
+            android.util.Log.e("AlarmScheduler","Test alarm scheduling blocked",e)
+            false
+        }
+    }
     fun snooze(c:Context,id:String,minutes:Int) {
         val whenAt=System.currentTimeMillis()+minutes.coerceIn(1,60)*60000L
         val mgr=c.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val p=pending(c,id,true)
         try {
-            if(Build.VERSION.SDK_INT<31 || mgr.canScheduleExactAlarms())
+            if(hasExactPermission(c))
                 mgr.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,whenAt,p)
-            else mgr.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,whenAt,p)
-        }catch(_:SecurityException){mgr.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,whenAt,p)}
+            else android.util.Log.e("AlarmScheduler","Snooze denied: exact alarm permission absent")
+        }catch(e:SecurityException){
+            android.util.Log.e("AlarmScheduler","Snooze scheduling blocked",e)
+        }
     }
     fun restore(c:Context) { AlarmStore.read(c).forEach { if(it.enabled)schedule(c,it) } }
 }

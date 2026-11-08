@@ -138,10 +138,13 @@ class AlarmSoundService:Service() {
             if(Build.VERSION.SDK_INT>=29)
                 startForeground(ID,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
             else startForeground(ID,notification)
-        }catch(_:Exception) {
+        }catch(e:Exception) {
+            android.util.Log.e("AlarmSoundService","Foreground playback could not start",e)
             notifyOnly(this,item);stopSelf();return START_NOT_STICKY
         }
-        val file=AlarmSounds.file(this,item.sound)?:AlarmSounds.file(this,"preset:0")
+        // Sound generation happens before starting the player; a missing custom tone falls back
+        // to an installed synthetic tone rather than producing a silent alarm.
+        val file=AlarmSounds.file(this,item.sound)?:AlarmSounds.file(this,"preset:3")
         if(file!=null) {
             val candidate=MediaPlayer()
             runCatching {
@@ -168,7 +171,10 @@ class AlarmSoundService:Service() {
                     }
                     fade=ticker;handler.postDelayed(ticker,900L)
                 }
-            }.onFailure { runCatching {candidate.release()} }
+            }.onFailure { failure ->
+                android.util.Log.e("AlarmSoundService","Alarm audio playback failed",failure)
+                runCatching {candidate.release()}
+            }
         }
         if(item.vibrate) {
             vibrator=getSystemService(VIBRATOR_SERVICE) as Vibrator

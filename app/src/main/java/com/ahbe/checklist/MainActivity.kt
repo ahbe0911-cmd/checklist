@@ -203,7 +203,7 @@ class MainActivity : Activity() {
         savedInstanceState?.getString("opened_note_id")?.let { id ->
             notes.firstOrNull { it.id == id }?.let { showNotePage(it) }
         }
-        requestInitialPermissions()
+        enforceNotePermissions()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -219,6 +219,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (::dateLabel.isInitialized) {
+            window.decorView.post {enforceNotePermissions()}
             updateDate()
             ReminderEngine.restore(this)
             syncVoiceDraft()
@@ -345,19 +346,6 @@ class MainActivity : Activity() {
         headerTop.addView(settingsButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
             marginStart = dp(10)
         })
-        // One additional independent control; all existing settings and notes remain intact.
-        val alarmButton = ImageButton(this).apply {
-            setImageResource(R.drawable.ic_alarm_clock)
-            imageTintList = ColorStateList.valueOf(muted)
-            background = shape(Color.rgb(248, 250, 252), 10, softBorder)
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            contentDescription = "آلارم"
-            setOnClickListener { com.ahbe.checklist.alarm.AlarmUi.show(this@MainActivity) }
-        }
-        headerTop.addView(alarmButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
-            marginStart = dp(6)
-        })
-
         categoryBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_RTL
@@ -1022,17 +1010,44 @@ class MainActivity : Activity() {
         dialog.show()
     }
 
-    private fun requestInitialPermissions() {
-        val prefs = getSharedPreferences("checklist_native", MODE_PRIVATE)
-        if (prefs.getBoolean("initial_permissions_requested", false)) return
-        prefs.edit().putBoolean("initial_permissions_requested", true).apply()
-        val missing = mutableListOf<String>()
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
-            missing.add(Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
-            missing.add(Manifest.permission.POST_NOTIFICATIONS)
-        if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), 915)
+    private var notePermissionGate:AlertDialog? = null
+    private fun missingNotePermissions():List<String> {
+        val requested=mutableListOf(Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.READ_CALENDAR,Manifest.permission.WRITE_CALENDAR)
+        if(Build.VERSION.SDK_INT>=33)requested.add(Manifest.permission.POST_NOTIFICATIONS)
+        return requested.filter{checkSelfPermission(it)!=PackageManager.PERMISSION_GRANTED}
+    }
+    /** Mandatory first-launch permission check for voice, calendar and reminder functions. */
+    private fun enforceNotePermissions() {
+        if(isFinishing || isDestroyed)return
+        val missing=missingNotePermissions()
+        val alarmManager=getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val exactMissing=Build.VERSION.SDK_INT>=31 && !alarmManager.canScheduleExactAlarms()
+        if(missing.isEmpty() && !exactMissing) {
+            notePermissionGate?.dismiss();notePermissionGate=null
+            return
+        }
+        if(notePermissionGate?.isShowing==true)return
+        val message=if(missing.isNotEmpty())
+            "برای استفاده از یادداشت‌های صوتی، تقویم و اعلان‌ها باید مجوزهای برنامه را فعال کنید. بدون این مجوزها برنامه قابل استفاده نیست."
+            else "برای یادآوری دقیق، اجازه «آلارم و یادآوری» را فعال کنید."
+        notePermissionGate=AlertDialog.Builder(this)
+            .setTitle("مجوزهای لازم")
+            .setMessage(message)
+            .setCancelable(false)
+            .setPositiveButton("فعال‌سازی"){_,_->
+                if(missing.isNotEmpty())requestPermissions(missing.toTypedArray(),916)
+                else runCatching {
+                    startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                        Uri.parse("package:"+packageName)))
+                }.onFailure {
+                    Toast.makeText(this,"مجوز را از تنظیمات برنامه فعال کنید",Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNegativeButton("خروج"){_,_->finish()}
+            .create()
+        notePermissionGate?.setCanceledOnTouchOutside(false)
+        notePermissionGate?.show()
     }
 
     private fun updateDate() {
@@ -2267,10 +2282,6 @@ class MainActivity : Activity() {
             }
             return
         }
-        if (requestCode == com.ahbe.checklist.alarm.AlarmUi.PICK_AUDIO) {
-            if (resultCode == RESULT_OK) com.ahbe.checklist.alarm.AlarmUi.receivePickedAudio(this, data)
-            return
-        }
         if (requestCode == 2016) {
             val prefs = getSharedPreferences("checklist_native", MODE_PRIVATE)
             val filename = prefs.getString("pending_audio_save", null)
@@ -2607,14 +2618,8 @@ class MainActivity : Activity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == com.ahbe.checklist.alarm.AlarmUi.LOCATION_PERMISSION) {
-            com.ahbe.checklist.alarm.AlarmUi.onLocationPermissionResult(
-                grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)
-            return
-        }
-        if (requestCode == com.ahbe.checklist.alarm.AlarmUi.MIC_PERMISSION) {
-            com.ahbe.checklist.alarm.AlarmUi.onMicPermissionResult(
-                grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)
+        if (requestCode == 916) {
+            window.decorView.post { enforceNotePermissions() }
             return
         }
         if (requestCode == 912) {
