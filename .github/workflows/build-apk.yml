@@ -47,14 +47,24 @@ jobs:
           test "$(git hash-object app/src/main/assets/fonts/far_vazir.ttf)" = "efa9b095da01d299310bdcae293e24e657fe6da9"
           test "$(git hash-object app/src/main/assets/fonts/far_nazanin.ttf)" = "5394a09545ac3274f1d24a3ff24777cac8baa584"
           test "$(git hash-object app/src/main/assets/fonts/a_rooznameh.ttf)" = "81c6269ddcbfef6b0f041dc2a55c3d2a396b19aa"
+          mkdir -p alarm/src/main/assets/fonts
+          cp app/src/main/assets/fonts/far_vazir.ttf alarm/src/main/assets/fonts/far_vazir.ttf
 
-      - name: Build native APK
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+      - name: Build both independent APKs
+        run: gradle :app:assembleDebug :alarm:assembleDebug --no-daemon --stacktrace
 
-      - name: Upload installable APK
+      - name: Upload notes APK
         uses: actions/upload-artifact@v4
         with:
-          name: checklist-native-debug-apk
+          name: notes-standalone-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload alarm APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: alarm-standalone-debug-apk
+          path: alarm/build/outputs/apk/debug/alarm-debug.apk
           if-no-files-found: error
           retention-days: 30
