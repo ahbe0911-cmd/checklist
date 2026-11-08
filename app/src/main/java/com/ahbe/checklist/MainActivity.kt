@@ -1047,166 +1047,169 @@ class MainActivity : Activity() {
         renderOpenNotePage()
     }
 
+    /**
+     * Message-like note bubbles shared by the inbox and nested note conversations.
+     * Clicking the bubble opens its note. Completion, attachments and deletion retain
+     * the original note persistence and media code paths.
+     */
     private fun addNoteCard(note: Note, index: Int, destination: LinearLayout = noteList) {
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(58)
-            setPadding(dp(13), dp(10), dp(9), dp(10))
-            background = shape(note.color, 16, Color.argb(12, 0, 0, 0))
-            elevation = dp(2).toFloat()
-            alpha = if (note.completed) 0.78f else 1f
-        }
-        destination.addView(card, LinearLayout.LayoutParams(-1, -2).apply {
+        val bubbleTones = intArrayOf(
+            Color.rgb(235, 232, 255),
+            Color.rgb(224, 250, 244),
+            Color.rgb(255, 237, 246),
+            Color.rgb(229, 242, 255)
+        )
+        val accentTones = intArrayOf(
+            indigo, emerald, Color.rgb(214, 68, 128), Color.rgb(54, 115, 221)
+        )
+        val tone = accentTones[(index - 1).mod(accentTones.size)]
+        val row = FrameLayout(this)
+        destination.addView(row, LinearLayout.LayoutParams(-1, -2).apply {
             bottomMargin = dp(12)
         })
-
-        val tapArea = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        val bubble = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            minimumWidth = dp(156)
+            setPadding(dp(15), dp(11), dp(15), dp(13))
+            background = shape(bubbleTones[(index - 1).mod(bubbleTones.size)], 21)
+            elevation = dp(2).toFloat()
+            alpha = if (note.completed) 0.82f else 1f
             isClickable = true
             isFocusable = true
-            contentDescription = "بازکردن یادداشت " + note.text
+            contentDescription = "باز کردن یادداشت: " + note.text
             setOnClickListener { showNotePage(note) }
         }
-        card.addView(tapArea, LinearLayout.LayoutParams(0, -2, 1f))
-
-        tapArea.addView(label(fa(index) + "-", 14f, Color.rgb(148, 163, 184), true),
-            LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(7) })
-
-        val checkBox = FrameLayout(this).apply {
-            background = shape(if (note.completed) emerald else Color.WHITE, 6,
-                if (note.completed) emerald else Color.rgb(203, 213, 225))
-            isClickable = true
-            contentDescription = if (note.completed) "برگرداندن به جاری" else "علامت انجام"
-            setOnClickListener { toggleCompleted(note) }
-        }
-        tapArea.addView(checkBox, LinearLayout.LayoutParams(dp(22), dp(22)).apply {
-            marginEnd = dp(11)
+        row.addView(bubble, FrameLayout.LayoutParams(-2, -2, Gravity.RIGHT).apply {
+            marginStart = dp(28)
+            marginEnd = dp(3)
         })
-        if (note.completed) {
-            checkBox.addView(ImageView(this).apply {
-                setImageResource(R.drawable.ic_check)
-                imageTintList = ColorStateList.valueOf(Color.WHITE)
-            }, FrameLayout.LayoutParams(dp(17), dp(17), Gravity.CENTER))
+        val identity = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.CENTER_VERTICAL
         }
-
-        val noteTextColumn = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        tapArea.addView(noteTextColumn, LinearLayout.LayoutParams(0, -2, 1f))
-        val noteText = label(note.text, noteTextSize.toFloat(), if (note.completed) muted else ink, !note.completed).apply {
+        bubble.addView(identity)
+        identity.addView(View(this).apply {
+            background = shape(tone, 8)
+        }, LinearLayout.LayoutParams(dp(7), dp(7)).apply { marginEnd = dp(7) })
+        identity.addView(label(
+            if (note.completed) "انجام‌شده" else "یادداشت",
+            11f, tone, true
+        ).apply { typeface = titleFont })
+        val body = label(note.text, noteTextSize.toFloat(),
+            if (note.completed) muted else ink, false).apply {
             typeface = textFont
-            // Word-style paragraph justification for multi-line Persian text.
-            // Preserve the complete original text instead of squeezing it into two lines.
+            maxWidth = resources.displayMetrics.widthPixels - dp(105)
             maxLines = Int.MAX_VALUE
             ellipsize = null
-            gravity = Gravity.TOP or Gravity.RIGHT
+            gravity = Gravity.RIGHT or Gravity.TOP
             textDirection = View.TEXT_DIRECTION_FIRST_STRONG
             breakStrategy = android.text.Layout.BREAK_STRATEGY_HIGH_QUALITY
             justificationMode = android.text.Layout.JUSTIFICATION_MODE_INTER_WORD
-            setLineSpacing(dp(4).toFloat(), 1.12f)
-            includeFontPadding = true
-            setPadding(dp(3), dp(5), dp(3), dp(5))
+            setLineSpacing(dp(3).toFloat(), 1.1f)
+            setPadding(0, dp(7), 0, dp(4))
             if (note.completed) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
         }
-        noteTextColumn.addView(noteText, LinearLayout.LayoutParams(-1, -2))
+        bubble.addView(body)
         note.dueAt?.let { due ->
-            noteTextColumn.addView(label("تاریخ اجرا: " + formatDueDate(due), 12f,
-                Color.rgb(195, 45, 52), true).apply { typeface = textFont },
-                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) })
+            bubble.addView(label("تاریخ اجرا: " + formatDueDate(due),
+                11f, Color.rgb(192, 57, 87), true).apply {
+                typeface = textFont
+                setPadding(0, dp(2), 0, dp(4))
+            })
         }
-        val countChildren = notes.count { it.parentId == note.id }
-        if (countChildren > 0 || note.imageFilenames.isNotEmpty() || note.audioAttachments.isNotEmpty()) {
-            noteTextColumn.addView(
-                label("زیرشاخه: " + fa(countChildren) + "  |  عکس: " +
-                    fa(note.imageFilenames.size) + "  |  صوت: " +
-                    fa(note.audioAttachments.size), 11f, indigo),
-                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) }
-            )
+        val descendants = notes.count { it.parentId == note.id }
+        if (descendants > 0 || note.imageFilenames.isNotEmpty() ||
+            note.audioAttachments.isNotEmpty()) {
+            bubble.addView(label("زیرشاخه " + fa(descendants) +
+                "  ·  تصویر " + fa(note.imageFilenames.size) +
+                "  ·  صوت " + fa(note.audioAttachments.size), 11f, tone).apply {
+                typeface = textFont
+                setPadding(0, dp(4), 0, dp(2))
+            })
         }
         if (note.audioFilename != null) {
-            val audioBadge = label("یادداشت صوتی", 10f, indigo, true).apply {
-                background = shape(Color.rgb(237, 240, 255), 8)
-                setPadding(dp(8), dp(4), dp(8), dp(4))
-            }
-            noteTextColumn.addView(audioBadge,
-                LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(5) })
-
-            val playback = LinearLayout(this).apply {
+            bubble.addView(label("پیام صوتی", 11f, tone, true).apply {
+                typeface = titleFont
+                setPadding(0, dp(4), 0, dp(6))
+            })
+            val preview = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 layoutDirection = View.LAYOUT_DIRECTION_RTL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(5), dp(4), dp(10), dp(4))
-                background = shape(Color.rgb(248, 249, 255), 13, Color.rgb(230, 233, 250))
+                setPadding(dp(6), dp(5), dp(6), dp(5))
+                background = shape(Color.argb(175, 255, 255, 255), 14)
             }
-            val isPlaying = playingNoteId == note.id
-            val play = ImageButton(this).apply {
-                setImageResource(if (isPlaying) R.drawable.ic_pause_voice else R.drawable.ic_play_voice)
-                imageTintList = ColorStateList.valueOf(indigo)
-                background = shape(Color.WHITE, 18, Color.rgb(231, 234, 250))
-                setPadding(dp(9), dp(9), dp(9), dp(9))
-                contentDescription = if (isPlaying) "توقف پخش" else "پخش " + note.text
+            bubble.addView(preview, LinearLayout.LayoutParams(-1, -2))
+            preview.addView(ImageButton(this).apply {
+                setImageResource(if (playingNoteId == note.id)
+                    R.drawable.ic_pause_voice else R.drawable.ic_play_voice)
+                imageTintList = ColorStateList.valueOf(tone)
+                background = shape(Color.WHITE, 18)
+                contentDescription = "پخش یا توقف پیام صوتی"
+                setPadding(dp(8), dp(8), dp(8), dp(8))
                 setOnClickListener { toggleVoicePlayback(note) }
-            }
-            playback.addView(play, LinearLayout.LayoutParams(dp(36), dp(36)))
-            playback.addView(ImageView(this).apply {
-                setImageResource(R.drawable.ic_waveform)
-                imageTintList = ColorStateList.valueOf(indigo)
-                contentDescription = "موج صدای ضبط‌شده"
-            }, LinearLayout.LayoutParams(dp(20), dp(20)).apply {
-                marginStart = dp(10)
-            })
-            playback.addView(label(formatDuration(note.audioDurationMs), 12f, muted, true),
-                LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(7) })
-            noteTextColumn.addView(playback,
-                LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(5) })
-            noteTextColumn.addView(voiceActionBar(note.audioFilename),
+            }, LinearLayout.LayoutParams(dp(38), dp(38)))
+            preview.addView(label(formatDuration(note.audioDurationMs), 12f, muted),
+                LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(12) })
+            bubble.addView(voiceActionBar(note.audioFilename),
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         }
-        val reminderTime = note.reminderAt
-        if (reminderTime != null && reminderTime > System.currentTimeMillis()) {
-            val scheduled = SimpleDateFormat("d MMMM yyyy، HH:mm",
-                ULocale("fa_IR@calendar=persian")).format(Date(reminderTime))
-            noteTextColumn.addView(
-                label("یادآوری: " + scheduled, reminderTextSize.toFloat(), indigo).apply {
-                    typeface = textFont
-                },
-                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) }
-            )
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(9), 0, 0)
         }
-        val bell = ImageButton(this).apply {
-            setImageResource(R.drawable.ic_bell)
-            imageTintList = ColorStateList.valueOf(if (reminderTime != null) indigo else muted)
-            background = shape(if (reminderTime != null) Color.rgb(224, 231, 255)
-                    else Color.argb(160, 255, 255, 255), 10)
+        bubble.addView(controls)
+        val complete = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_check)
+            imageTintList = ColorStateList.valueOf(if (note.completed)
+                Color.WHITE else tone)
+            background = shape(if (note.completed) emerald else Color.WHITE, 15)
             setPadding(dp(9), dp(9), dp(9), dp(9))
-            contentDescription = "تنظیم اعلان " + note.text
-            setOnClickListener { startReminderSetup(note) }
+            contentDescription = if (note.completed) "بازگرداندن یادداشت" else "علامت انجام"
+            setOnClickListener { toggleCompleted(note) }
         }
-        card.addView(bell, LinearLayout.LayoutParams(dp(37), dp(37)).apply {
-            marginStart = dp(7)
-        })
-
-        val remove = ImageButton(this).apply {
+        controls.addView(complete, LinearLayout.LayoutParams(dp(38), dp(38)))
+        controls.addView(label("مشاهده جزئیات", 11f, tone).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), 0, dp(12), 0)
+            isClickable = true
+            setOnClickListener { showNotePage(note) }
+        }, LinearLayout.LayoutParams(0, dp(38), 1f))
+        controls.addView(ImageButton(this).apply {
             setImageResource(R.drawable.ic_trash)
-            imageTintList = ColorStateList.valueOf(Color.rgb(148, 163, 184))
-            background = shape(Color.argb(155, 255, 255, 255), 10)
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            contentDescription = "حذف " + note.text
+            imageTintList = ColorStateList.valueOf(Color.rgb(163, 75, 106))
+            background = shape(Color.argb(180, 255, 255, 255), 15)
+            setPadding(dp(9), dp(9), dp(9), dp(9))
+            contentDescription = "حذف یادداشت " + note.text
             setOnClickListener {
-                isEnabled = false
-                card.animate().alpha(0f).scaleX(0.96f).scaleY(0.9f).setDuration(200L)
-                    .withEndAction {
-                        ReminderEngine.cancel(this@MainActivity, note.id)
-                        PhoneCalendarStore.deleteEvent(this@MainActivity, note.calendarEventId)
-                        removeNoteTree(note)
-                        saveNotes()
-                        renderNotes()
-                    }.start()
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("حذف یادداشت")
+                    .setMessage("این یادداشت و زیرشاخه‌های آن حذف شوند؟")
+                    .setNegativeButton("انصراف", null)
+                    .setPositiveButton("حذف") { _, _ ->
+                        row.animate().alpha(0f).scaleX(0.96f).setDuration(160L)
+                            .withEndAction {
+                                removeNoteTree(note)
+                                saveNotes()
+                                renderNotes()
+                            }.start()
+                    }.show()
+            }
+        }, LinearLayout.LayoutParams(dp(38), dp(38)))
+        if (lastInsertedNoteId == note.id) {
+            lastInsertedNoteId = null
+            row.alpha = 0f
+            row.translationY = dp(28).toFloat()
+            row.post {
+                row.animate().alpha(1f).translationY(0f).setDuration(300L)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator())
+                    .start()
             }
         }
-        card.addView(remove, LinearLayout.LayoutParams(dp(36), dp(36)).apply {
-            marginStart = dp(8)
-        })
     }
 
     /**
