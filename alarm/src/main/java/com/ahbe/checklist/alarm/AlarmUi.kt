@@ -92,139 +92,189 @@ object AlarmUi {
         return block
     }
     private fun stopPreview(){runCatching{preview?.stop()};runCatching{preview?.release()};preview=null}
-    fun show(a:Activity) {
-        activeDialog?.dismiss()
-        stopPreview()
-        val shell=container(a).apply{
-            setPadding(dp(a,18),dp(a,10),dp(a,18),dp(a,16))
-            setBackgroundColor(light)
+    private var selectedTab=0
+    private var editingScreen=false
+    private var settingsScreen=false
+    fun back(a:Activity):Boolean {
+        if(editingScreen || settingsScreen || selectedTab!=0){
+            selectedTab=0;show(a);return true
         }
-        val top=LinearLayout(a).apply {
+        return false
+    }
+    /** Full-screen native dashboard. Never displays the main interface in a modal dialog. */
+    fun show(a:Activity) {
+        stopPreview()
+        editingScreen=false;settingsScreen=false
+        val root=container(a).apply {
+            setBackgroundColor(light)
+            setPadding(dp(a,16),dp(a,16),dp(a,16),dp(a,8))
+        }
+        a.window.statusBarColor=Color.WHITE
+        val header=LinearLayout(a).apply{
             layoutDirection=View.LAYOUT_DIRECTION_RTL
             gravity=Gravity.CENTER_VERTICAL
         }
-        shell.addView(top)
-        top.addView(txt(a,"آلارم",23f,navy,true),LinearLayout.LayoutParams(0,-2,1f))
-        val dialog=Dialog(a)
-        top.addView(button(a,"✕  بستن"){dialog.dismiss()})
-        val scroll=ScrollView(a).apply{isFillViewport=false;isVerticalScrollBarEnabled=false}
-        shell.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
-        val content=container(a)
-        scroll.addView(content)
-        val all=AlarmStore.read(a)
-        val solar=all.firstOrNull{it.sunrise}?:AlarmItem(id="sunrise-primary",
-            title="آلارم طلوع آفتاب",sunrise=true,enabled=false)
-        val solarCard=card(a,content)
-        solarCard.addView(txt(a,"☀  آلارم هوشمند طلوع آفتاب",18f,navy,true))
-        val location=AlarmStore.location(a)
-        solarCard.addView(txt(a,"موقعیت: "+if(location==null)"هنوز ثبت نشده؛ مکان‌یابی خودکار در جریان است" else AlarmStore.locationLabel(a),
-            13f,muted))
-        if(location!=null){
-            val zone=runCatching{ZoneId.of(location.third)}.getOrDefault(ZoneId.systemDefault())
-            val today=Instant.now().atZone(zone).toLocalDate()
-            val sunrise=SolarMath.sunrise(today,location.first,location.second,zone)
-            solarCard.addView(txt(a,"طلوع امروز: "+if(sunrise==null)"در این تاریخ طلوع رخ نمی‌دهد"
-                else displayTime(sunrise,zone),13f,muted))
-        }
-        solarCard.addView(txt(a,"فاصله: "+solar.offset+" دقیقه قبل | صدا: "+
-            AlarmSounds.label(solar.sound),13f,muted))
-        solarCard.addView(txt(a,"اجرای بعدی: "+nextText(a,solar),13f,muted))
-        val solarControls=LinearLayout(a).apply{orientation=LinearLayout.HORIZONTAL}
-        solarCard.addView(solarControls)
-        solarControls.addView(button(a,"تنظیمات"){edit(a,solar,true,dialog)},
-            LinearLayout.LayoutParams(0,-2,1f))
-        solarControls.addView(button(a,"موقعیت"){dialog.dismiss();locationEditor(a){show(a)}},
-            LinearLayout.LayoutParams(0,-2,1f).apply{marginStart=dp(a,6)})
-        solarControls.addView(button(a,if(solar.enabled)"فعال ✓" else "خاموش"){ 
-            solar.enabled=!solar.enabled
-            if(solar.enabled && AlarmStore.location(a)==null) {
-                solar.enabled=false
-                locationEditor(a){solar.enabled=true;AlarmStore.update(a,solar);show(a)}
-            }else{AlarmStore.update(a,solar);show(a)}
-            dialog.dismiss()
-        },LinearLayout.LayoutParams(0,-2,1f).apply{marginStart=dp(a,6)})
-        content.addView(txt(a,"آلارم‌های معمولی",18f,navy,true).apply{
-            setPadding(0,dp(a,20),0,dp(a,5))
-        })
-        all.filterNot{it.sunrise}.forEach{item->
-            val block=card(a,content)
-            block.addView(txt(a,item.title,17f,navy,true))
-            block.addView(txt(a,"%02d:%02d".format(item.hour,item.minute)+
-                "  •  "+repeatName(item)+
-                "  •  "+if(item.enabled)"فعال" else "غیرفعال",14f,muted))
-            block.addView(txt(a,"صدای زنگ: "+AlarmSounds.label(item.sound)+
-                "\nنوبت بعدی: "+nextText(a,item),12f,muted))
-            val controls=LinearLayout(a).apply{orientation=LinearLayout.HORIZONTAL}
-            block.addView(controls)
-            for(pair in listOf(
-                "ویرایش" to {edit(a,item,false,dialog)},
-                (if(item.enabled)"خاموش" else "روشن") to {
-                    item.enabled=!item.enabled;AlarmStore.update(a,item);dialog.dismiss();show(a)
-                },
-                "حذف" to {
-                    AlertDialog.Builder(a).setTitle("حذف آلارم")
-                        .setMessage("«"+item.title+"» حذف شود؟")
-                        .setNegativeButton("انصراف",null)
-                        .setPositiveButton("حذف"){_,_->AlarmStore.remove(a,item.id);dialog.dismiss();show(a)}
-                        .show()
-                }
-            ))controls.addView(button(a,pair.first){pair.second()},
-                LinearLayout.LayoutParams(0,-2,1f).apply{marginStart=dp(a,5)})
-        }
-        content.addView(button(a,"تقویم شمسی آلارم‌ها"){
-            choosePersianDate(a,System.currentTimeMillis()){selected->
-                val fresh=AlarmItem(title="آلارم جدید",repeat=0,startDate=selected)
-                edit(a,fresh,false,dialog)
+        root.addView(header)
+        header.addView(txt(a,"آلارم",26f,navy,true),LinearLayout.LayoutParams(0,-2,1f))
+        header.addView(button(a,"⚙ تنظیمات"){showSettings(a)})
+        root.addView(txt(a,"زنگ‌های دقیق، ساده و قابل اطمینان",13f,muted))
+        val tabs=LinearLayout(a).apply{layoutDirection=View.LAYOUT_DIRECTION_RTL}
+        root.addView(tabs,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,12)})
+        listOf("آلارم‌های من","طلوع آفتاب","تقویم شمسی").forEachIndexed{index,label->
+            val tab=button(a,label){
+                selectedTab=index;show(a)
             }
-        },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,12)})
-        content.addView(button(a,"＋ افزودن آلارم"){
-            edit(a,AlarmItem(title="آلارم جدید"),false,dialog)
-        },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,12)})
-        content.addView(button(a,"آزمایش واقعی آلارم در ۱۵ ثانیه") {
-            if(AlarmScheduler.scheduleTest(a,15)) {
-                Toast.makeText(a,"تست ثبت شد. صفحه را قفل کنید و زنگ را بررسی کنید.",Toast.LENGTH_LONG).show()
-            } else {
-                Toast.makeText(a,"آلارم دقیق مجوز ندارد؛ از تنظیمات فعال کنید.",Toast.LENGTH_LONG).show()
+            if(index==selectedTab) {
+                tab.background=shape(a,Color.rgb(69,105,195),12)
+                tab.setTextColor(Color.WHITE)
             }
-        },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,12);bottomMargin=dp(a,16)})
-        val mgr=a.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        if(Build.VERSION.SDK_INT>=31 && !mgr.canScheduleExactAlarms()){
-            content.addView(txt(a,"برای اجرای دقیق زنگ، مجوز «آلارم و یادآوری» را فعال کنید.",
-                12f,Color.rgb(186,83,55)))
-            content.addView(button(a,"تنظیم مجوز آلارم دقیق") {
-                runCatching{a.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
-                    Uri.parse("package:"+a.packageName)))}
+            tabs.addView(tab,LinearLayout.LayoutParams(0,-2,1f).apply{
+                marginStart=dp(a,3)
             })
         }
-        if(Build.VERSION.SDK_INT>=34) {
-            val nm=a.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-            if(!nm.canUseFullScreenIntent()){
-                content.addView(txt(a,"برای نمایش زنگ روی صفحه قفل، مجوز نمایش تمام‌صفحه را بررسی کنید.",
-                    12f,Color.rgb(186,83,55)))
-                content.addView(button(a,"تنظیم نمایش تمام‌صفحه") {
-                    runCatching {
-                        a.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
-                            Uri.parse("package:"+a.packageName)))
-                    }
+        val scroll=ScrollView(a).apply{
+            isFillViewport=true
+            isVerticalScrollBarEnabled=false
+        }
+        root.addView(scroll,LinearLayout.LayoutParams(-1,0,1f).apply{
+            topMargin=dp(a,12)
+        })
+        val content=container(a).apply{setPadding(0,dp(a,4),0,dp(a,18))}
+        scroll.addView(content)
+        val all=AlarmStore.read(a)
+        when(selectedTab){
+            0 -> {
+                content.addView(button(a,"＋  افزودن آلارم جدید"){
+                    edit(a,AlarmItem(title="آلارم جدید"),false)
                 })
+                if(all.none{!it.sunrise})
+                    content.addView(txt(a,"هنوز آلارمی ثبت نکرده‌اید. برای شروع «افزودن آلارم جدید» را بزنید.",
+                        15f,muted))
+                all.filterNot{it.sunrise}.forEach{item->
+                    val block=card(a,content)
+                    block.addView(txt(a,item.title,19f,navy,true))
+                    block.addView(txt(a,"%02d:%02d".format(item.hour,item.minute)+
+                        "   •   "+repeatName(item),15f,muted))
+                    block.addView(txt(a,"زنگ بعدی: "+nextText(a,item),13f,muted))
+                    block.addView(txt(a,"صدا: "+AlarmSounds.label(item.sound),12f,muted))
+                    val controls=LinearLayout(a).apply{layoutDirection=View.LAYOUT_DIRECTION_RTL}
+                    block.addView(controls,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,8)})
+                    controls.addView(button(a,"ویرایش"){edit(a,item,false)},
+                        LinearLayout.LayoutParams(0,-2,1f))
+                    controls.addView(button(a,if(item.enabled)"خاموش‌کردن" else "فعال‌کردن"){
+                        item.enabled=!item.enabled;AlarmStore.update(a,item);show(a)
+                    },LinearLayout.LayoutParams(0,-2,1f).apply{marginStart=dp(a,5)})
+                    controls.addView(button(a,"حذف"){
+                        AlertDialog.Builder(a).setTitle("حذف آلارم")
+                            .setMessage("«"+item.title+"» حذف شود؟")
+                            .setNegativeButton("انصراف",null)
+                            .setPositiveButton("حذف"){_,_->
+                                AlarmStore.remove(a,item.id);show(a)
+                            }.show()
+                    },LinearLayout.LayoutParams(0,-2,1f).apply{marginStart=dp(a,5)})
+                }
+            }
+            1 -> {
+                val solar=all.firstOrNull{it.sunrise}?:AlarmItem(
+                    id="sunrise-primary",title="آلارم طلوع آفتاب",sunrise=true,enabled=false)
+                val section=card(a,content)
+                section.addView(txt(a,"آلارم هوشمند طلوع آفتاب",20f,navy,true))
+                val place=AlarmStore.location(a)
+                section.addView(txt(a,if(place==null)"موقعیت هنوز پیدا نشده است."
+                    else "موقعیت: "+AlarmStore.locationLabel(a)+
+                        if(AlarmStore.isAutomaticLocation(a))" (خودکار)" else " (انتخاب دستی)",
+                    14f,muted))
+                if(place!=null){
+                    val zone=runCatching{ZoneId.of(place.third)}.getOrDefault(ZoneId.systemDefault())
+                    val date=Instant.now().atZone(zone).toLocalDate()
+                    val sunrise=SolarMath.sunrise(date,place.first,place.second,zone)
+                    section.addView(txt(a,"طلوع امروز: "+
+                        if(sunrise==null)"در این تاریخ طلوع رخ نمی‌دهد" else displayTime(sunrise,zone),
+                        15f,navy,true))
+                }
+                section.addView(txt(a,"زنگ "+solar.offset+" دقیقه قبل از طلوع",15f,navy))
+                section.addView(txt(a,"نوبت بعد: "+nextText(a,solar),14f,muted))
+                section.addView(button(a,"تشخیص خودکار موقعیت فعلی گوشی"){
+                    Toast.makeText(a,"در حال دریافت موقعیت دقیق GPS…",Toast.LENGTH_SHORT).show()
+                    refreshAutomaticLocation(a,true){show(a)}
+                })
+                section.addView(button(a,"انتخاب مکان از روی نقشه یا مختصات"){
+                    locationEditor(a){show(a)}
+                },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,8)})
+                section.addView(button(a,"تنظیم زمان، روزها و صدای طلوع"){
+                    edit(a,solar,true)
+                },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,8)})
+                section.addView(button(a,if(solar.enabled)"خاموش‌کردن آلارم طلوع"
+                    else "فعال‌کردن آلارم طلوع"){
+                    if(!solar.enabled && AlarmStore.location(a)==null){
+                        Toast.makeText(a,"اول موقعیت را به‌صورت خودکار یا دستی تعیین کنید.",
+                            Toast.LENGTH_LONG).show()
+                    } else {
+                        solar.enabled=!solar.enabled;AlarmStore.update(a,solar);show(a)
+                    }
+                },LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,8)})
+            }
+            else -> {
+                content.addView(txt(a,"یک تاریخ را انتخاب کنید تا زنگ آن روز را بسازید؛ "+
+                    "سپس می‌توانید تکرار ماهانه یا سالانه را تعیین کنید.",15f,muted))
+                val calendar=PersianCalendarPicker.view(a,System.currentTimeMillis()){date->
+                    val alarm=AlarmItem(title="آلارم جدید",repeat=0,startDate=date,
+                        hour=9,minute=0)
+                    edit(a,alarm,false)
+                }
+                val block=card(a,content)
+                block.addView(calendar)
             }
         }
-        dialog.setContentView(shell)
-        dialog.window?.apply {
-            setBackgroundDrawableResource(android.R.color.transparent)
-            setLayout((a.resources.displayMetrics.widthPixels*0.95).toInt(),
-                (a.resources.displayMetrics.heightPixels*0.88).toInt())
-            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            attributes=attributes.apply{dimAmount=0.55f;gravity=Gravity.CENTER}
+        a.setContentView(root)
+    }
+    private fun showSettings(a:Activity) {
+        settingsScreen=true;editingScreen=false
+        val root=container(a).apply{
+            setBackgroundColor(light)
+            setPadding(dp(a,18),dp(a,18),dp(a,18),dp(a,18))
         }
-        dialog.setOnDismissListener {
-            stopPreview();stopRecorder(false)
-            if(activeDialog===dialog)activeDialog=null
+        root.addView(button(a,"بازگشت به آلارم‌ها"){show(a)})
+        root.addView(txt(a,"تنظیمات آلارم",24f,navy,true))
+        val alarmManager=a.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val exact=Build.VERSION.SDK_INT<31 || alarmManager.canScheduleExactAlarms()
+        val notification=Build.VERSION.SDK_INT<33 ||
+            a.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED
+        val fullscreen=Build.VERSION.SDK_INT<34 ||
+            (a.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).canUseFullScreenIntent()
+        val location=a.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED
+        val mic=a.checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED
+        val checks=listOf("آلارم دقیق" to exact,"اعلان‌ها" to notification,
+            "نمایش روی صفحه قفل" to fullscreen,"مکان دقیق" to location,
+            "ضبط صدای دلخواه" to mic)
+        val block=card(a,root)
+        checks.forEach{(name,ok)->
+            block.addView(txt(a,(if(ok)"✓  " else "⚠  ")+name+" : "+
+                if(ok)"فعال" else "نیاز به مجوز",15f,if(ok)navy else Color.rgb(186,77,52)))
         }
-        activeDialog=dialog
-        dialog.show()
-        dialog.window?.setLayout((a.resources.displayMetrics.widthPixels*0.95).toInt(),
-            (a.resources.displayMetrics.heightPixels*0.86).toInt())
+        block.addView(button(a,"بازکردن تنظیمات مجوزهای گوشی"){
+            a.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:"+a.packageName)))
+        })
+        if(!exact)block.addView(button(a,"فعال‌کردن آلارم دقیق"){
+            runCatching{a.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                Uri.parse("package:"+a.packageName)))}
+        })
+        if(!fullscreen && Build.VERSION.SDK_INT>=34)
+            block.addView(button(a,"اجازه نمایش تمام‌صفحه"){
+                runCatching{a.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                    Uri.parse("package:"+a.packageName)))}
+            })
+        val test=card(a,root)
+        test.addView(txt(a,"تست زنگ روی گوشی",18f,navy,true))
+        test.addView(txt(a,"با این آزمایش زنگ واقعی ۱۵ ثانیه بعد اجرا می‌شود؛ "+
+            "برای بررسی، صفحه گوشی را قفل کنید.",13f,muted))
+        test.addView(button(a,"اجرای تست ۱۵ ثانیه‌ای"){
+            val ok=AlarmScheduler.scheduleTest(a,15)
+            Toast.makeText(a,if(ok)"تست برای ۱۵ ثانیه بعد ثبت شد"
+                else "مجوز آلارم دقیق را فعال کنید",Toast.LENGTH_LONG).show()
+        })
+        a.setContentView(root)
     }
     private fun displayTime(time:Long,zone:ZoneId=ZoneId.systemDefault())=
         DateTimeFormatter.ofPattern("HH:mm").withZone(zone).format(Instant.ofEpochMilli(time))
