@@ -280,6 +280,7 @@ object AlarmUi {
         DateTimeFormatter.ofPattern("HH:mm").withZone(zone).format(Instant.ofEpochMilli(time))
     private fun nextText(a:Activity,item:AlarmItem):String {
         if(!item.enabled)return "غیرفعال"
+        if(!AlarmScheduler.hasExactPermission(a))return "مجوز آلارم دقیق فعال نیست"
         val time=AlarmScheduler.next(item,a)?:return "نامشخص؛ موقعیت یا تاریخ را بررسی کنید"
         return persianDate(a,time)+" - "+displayTime(time)
     }
@@ -808,12 +809,15 @@ object AlarmUi {
         query(0)
     }
     /** Automatically locate only new/previously auto-located alarms; never override a map pin. */
-    fun refreshAutomaticLocation(a:Activity,updated:()->Unit={}) {
-        if(AlarmStore.location(a)!=null && !AlarmStore.isAutomaticLocation(a))return
+    fun refreshAutomaticLocation(a:Activity,force:Boolean=false,updated:()->Unit={}) {
+        if(!force && AlarmStore.location(a)!=null && !AlarmStore.isAutomaticLocation(a))return
         if(a.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=
-            PackageManager.PERMISSION_GRANTED)return
+            PackageManager.PERMISSION_GRANTED){
+            Toast.makeText(a,"برای مکان‌یابی، دسترسی موقعیت دقیق را فعال کنید",Toast.LENGTH_LONG).show()
+            return
+        }
         readLocation(a){lat,lon->
-            if(AlarmStore.location(a)==null || AlarmStore.isAutomaticLocation(a)){
+            if(force || AlarmStore.location(a)==null || AlarmStore.isAutomaticLocation(a)){
                 runCatching {
                     AlarmStore.setLocation(a,lat,lon,ZoneId.systemDefault().id,
                         "موقعیت فعلی گوشی","auto")
