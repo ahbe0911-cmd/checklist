@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="novi_background">#F6F7FD</color>
+    <color name="novi_primary">#594CEF</color>
+    <color name="novi_text">#1C1F3F</color>
+    <color name="novi_muted">#666E8A</color>
+    <color name="novi_mint">#05B9A3</color>
+    <color name="novi_pink">#D64480</color>
+    <color name="novi_ice">#E5F2FF</color>
+</resources>
