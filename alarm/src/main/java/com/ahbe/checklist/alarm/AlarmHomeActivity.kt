@@ -111,7 +111,7 @@ class AlarmHomeActivity: Activity() {
         }
         if(missingExact()) {
             hint.text="مجوز «آلارم و یادآوری» باید برای اجرای دقیق زنگ فعال شود."
-            if(userAction && !requestedExactOnce) {
+            if(userAction) {
                 requestedExactOnce=true
                 runCatching {
                     startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
@@ -122,7 +122,7 @@ class AlarmHomeActivity: Activity() {
         }
         if(missingFullscreen()) {
             hint.text="اجازه نمایش زنگ تمام‌صفحه روی صفحه قفل را فعال کنید."
-            if(userAction && !requestedFullscreenOnce) {
+            if(userAction) {
                 requestedFullscreenOnce=true
                 runCatching {
                     startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
