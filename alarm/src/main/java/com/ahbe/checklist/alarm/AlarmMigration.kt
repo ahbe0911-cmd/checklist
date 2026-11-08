@@ -79,6 +79,16 @@ object AlarmMigration {
             }
         }
         check(edit.commit()){"تنظیمات ذخیره نشد"}
+        // The private files directory changes with the Android package ID.
+        val migrated=AlarmStore.read(c)
+        migrated.forEach { alarm ->
+            if(!alarm.sound.startsWith("preset:")) {
+                val name=File(alarm.sound).name
+                val candidate=File(sounds,name)
+                alarm.sound=if(candidate.isFile)candidate.absolutePath else "preset:3"
+            }
+        }
+        AlarmStore.save(c,migrated)
         AlarmScheduler.restore(c)
     }
 }
