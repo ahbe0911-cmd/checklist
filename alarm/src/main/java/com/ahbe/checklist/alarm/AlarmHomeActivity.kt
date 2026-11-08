@@ -55,7 +55,10 @@ class AlarmHomeActivity: Activity() {
         })
         shell.addView(label("فعال‌کردن مجوزها",18f).apply{
             setTextColor(Color.rgb(50,92,194))
-            setOnClickListener{proceed(true)}
+            setOnClickListener{
+                requestedExactOnce=false;requestedFullscreenOnce=false
+                proceed(true)
+            }
         })
         shell.addView(label("واردکردن آلارم‌ها از پشتیبان یادداشت‌های من",16f).apply {
             setTextColor(Color.rgb(50,92,194))
@@ -122,7 +125,7 @@ class AlarmHomeActivity: Activity() {
         }
         if(missingFullscreen()) {
             hint.text="اجازه نمایش زنگ تمام‌صفحه روی صفحه قفل را فعال کنید."
-            if(userAction) {
+            if(userAction && !requestedFullscreenOnce) {
                 requestedFullscreenOnce=true
                 runCatching {
                     startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
@@ -149,7 +152,11 @@ class AlarmHomeActivity: Activity() {
 
     override fun onResume(){
         super.onResume()
-        if(::hint.isInitialized)hint.post{proceed(false)}
+        if(::hint.isInitialized)hint.post {
+            if(!launched && missingRuntime().isEmpty() && !missingExact() &&
+                !requestedFullscreenOnce)proceed(true)
+            else proceed(false)
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode:Int,
@@ -192,5 +199,11 @@ class AlarmHomeActivity: Activity() {
                 }
             }
         }.start()
+    }
+
+    @Deprecated("Classic back navigation")
+    override fun onBackPressed() {
+        if(launched && AlarmUi.back(this))return
+        super.onBackPressed()
     }
 }
