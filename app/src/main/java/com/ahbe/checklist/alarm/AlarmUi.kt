@@ -187,8 +187,26 @@ object AlarmUi {
                     Uri.parse("package:"+a.packageName)))}
             })
         }
+        // The stop action must be reachable even when another app is in use.
+        AlarmSoundService.channel(a)
+        val nm=a.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val notificationsEnabled=nm.areNotificationsEnabled()
+        val alarmImportance=nm.getNotificationChannel(AlarmSoundService.CHANNEL)?.importance
+            ?:NotificationManager.IMPORTANCE_NONE
+        if(!notificationsEnabled || alarmImportance<NotificationManager.IMPORTANCE_HIGH){
+            content.addView(txt(a,"برای دسترسی به توقف آلارم هنگام استفاده از دوربین یا برنامه‌های دیگر، اعلان زنگ ساعت و نمایش آن روی صفحه را فعال کنید.",
+                12f,Color.rgb(186,83,55)))
+            content.addView(button(a,"تنظیم اعلان آلارم") {
+                runCatching {
+                    a.startActivity(Intent(if(notificationsEnabled)Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS
+                        else Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                        putExtra(Settings.EXTRA_APP_PACKAGE,a.packageName)
+                        if(notificationsEnabled)putExtra(Settings.EXTRA_CHANNEL_ID,AlarmSoundService.CHANNEL)
+                    })
+                }
+            })
+        }
         if(Build.VERSION.SDK_INT>=34) {
-            val nm=a.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
             if(!nm.canUseFullScreenIntent()){
                 content.addView(txt(a,"برای نمایش زنگ روی صفحه قفل، مجوز نمایش تمام‌صفحه را بررسی کنید.",
                     12f,Color.rgb(186,83,55)))

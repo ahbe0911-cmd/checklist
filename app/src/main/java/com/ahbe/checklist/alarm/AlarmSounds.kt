@@ -83,7 +83,7 @@ class AlarmSoundService:Service() {
     companion object {
         const val START="com.ahbe.checklist.alarm.START"
         const val STOP="com.ahbe.checklist.alarm.STOP"
-        private const val CHANNEL="independent_alarm_ring_v1"
+        internal const val CHANNEL="independent_alarm_ring_v1"
         private const val ID=9061
         fun channel(c:Context) {
             val mgr=c.getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -102,18 +102,28 @@ class AlarmSoundService:Service() {
             }
             val open=PendingIntent.getActivity(c,item.id.hashCode(),screen,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            val stop=PendingIntent.getService(c,18,
-                Intent(c,AlarmSoundService::class.java).apply {action=STOP},
+            val stop=PendingIntent.getBroadcast(c,18,
+                Intent(c,AlarmStopReceiver::class.java).apply {action=STOP},
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            return Notification.Builder(c,CHANNEL)
+            val builder=Notification.Builder(c,CHANNEL)
                 .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
                 .setContentTitle("آلارم: "+item.title)
-                .setContentText("برای توقف یا تعویق، زنگ را باز کنید")
+                .setContentText("برای قطع صدا و لرزش، دکمه توقف آلارم را بزنید")
                 .setContentIntent(open).setFullScreenIntent(open,true)
                 .setPriority(Notification.PRIORITY_MAX).setCategory(Notification.CATEGORY_ALARM)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
-                .addAction(android.R.drawable.ic_media_pause,"توقف",stop)
-                .setOngoing(true).build()
+                .addAction(android.R.drawable.ic_media_pause,"توقف آلارم",stop)
+                .setOngoing(true)
+                .setAutoCancel(false)
+                .setDeleteIntent(stop)
+            if(Build.VERSION.SDK_INT>=31)
+                builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+            return builder.build()
+        }
+        // Stop the existing service without starting a new one from a notification.
+        fun stopRinging(c:Context) {
+            c.stopService(Intent(c,AlarmSoundService::class.java))
+            (c.getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(ID)
         }
         fun notifyOnly(c:Context,item:AlarmItem) {
             runCatching {
@@ -182,7 +192,16 @@ class AlarmSoundService:Service() {
         vibrator?.cancel();vibrator=null
     }
     private fun end(){
-        endSound();stopForeground(STOP_FOREGROUND_REMOVE);stopSelf()
+        endSound();stopForeground(STOP_FOREGROUND_REMOVE)
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(ID)
+        stopSelf()
     }
     override fun onDestroy(){endSound();super.onDestroy()}
+}
+
+/** Notification actions (including user dismissal) stop the alarm without opening the app. */
+class AlarmStopReceiver:BroadcastReceiver() {
+    override fun onReceive(c:Context,intent:Intent) {
+        if(intent.action==AlarmSoundService.STOP) AlarmSoundService.stopRinging(c)
+    }
 }

@@ -49,6 +49,7 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback"/>
         <receiver android:name=".alarm.AlarmTriggerReceiver" android:exported="false"/>
+        <receiver android:name=".alarm.AlarmStopReceiver" android:exported="false"/>
         <receiver android:name=".alarm.AlarmBootReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED"/>
