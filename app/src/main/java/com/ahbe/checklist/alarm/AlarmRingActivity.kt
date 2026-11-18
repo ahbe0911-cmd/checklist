@@ -91,8 +91,6 @@ class AlarmRingActivity:Activity() {
         }
     }
     private fun stopSound(){
-        startService(Intent(this,AlarmSoundService::class.java).apply {
-            action=AlarmSoundService.STOP
-        })
+        AlarmSoundService.stopRinging(this)
     }
 }
