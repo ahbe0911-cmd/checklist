@@ -36,6 +36,7 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback"/>
         <receiver android:name=".AlarmTriggerReceiver" android:exported="false"/>
+        <receiver android:name=".AlarmStopReceiver" android:exported="false"/>
         <receiver android:name=".AlarmTestReceiver" android:exported="false"/>
         <receiver android:name=".AlarmBootReceiver" android:exported="false">
             <intent-filter>

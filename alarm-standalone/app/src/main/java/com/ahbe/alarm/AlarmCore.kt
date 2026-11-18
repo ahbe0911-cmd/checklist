@@ -34,7 +34,8 @@ data class AlarmItem(
     var endDate: Long = 0, // inclusive; zero means no end
     var maxOccurrences: Int = 0, // zero means unlimited
     var firedCount: Int = 0,
-    var missingDayLast: Boolean = true
+    var missingDayLast: Boolean = true,
+    var fajr: Boolean = false
 ) {
     fun toJson() = JSONObject().apply {
         put("id",id);put("title",title);put("sunrise",sunrise)
@@ -44,7 +45,7 @@ data class AlarmItem(
         put("gradual",gradual);put("next",next)
         put("startDate",startDate);put("endDate",endDate)
         put("maxOccurrences",maxOccurrences);put("firedCount",firedCount)
-        put("missingDayLast",missingDayLast)
+        put("missingDayLast",missingDayLast);put("fajr",fajr)
     }
     companion object {
         fun from(j: JSONObject) = AlarmItem(
@@ -58,7 +59,7 @@ data class AlarmItem(
             j.optBoolean("gradual",true),j.optLong("next",0),
             j.optLong("startDate",0),j.optLong("endDate",0),
             j.optInt("maxOccurrences",0).coerceAtLeast(0),j.optInt("firedCount",0).coerceAtLeast(0),
-            j.optBoolean("missingDayLast",true)
+            j.optBoolean("missingDayLast",true),j.optBoolean("fajr",false)
         )
     }
 }
@@ -136,6 +137,7 @@ object AlarmScheduler {
     private fun pending(c:Context,id:String,snooze:Boolean=false,flags:Int=PendingIntent.FLAG_UPDATE_CURRENT) =
         PendingIntent.getBroadcast(c,0,intent(c,id,snooze),flags or PendingIntent.FLAG_IMMUTABLE)
     fun next(item:AlarmItem,c:Context,now:Long=System.currentTimeMillis()):Long? {
+        if(item.fajr)return FajrGalikesh.next(item,now)
         val location=if(item.sunrise)AlarmStore.location(c) else null
         if(item.sunrise && location==null)return null
         val zone=runCatching { ZoneId.of(location?.third?:TimeZone.getDefault().id) }
@@ -240,7 +242,7 @@ class AlarmTriggerReceiver:BroadcastReceiver() {
         // A one-shot alarm becomes inactive after firing; its snooze must still ring.
         if(!item.enabled && !isSnooze)return
         if(!isSnooze) {
-            if(!item.sunrise) {
+            if(!item.sunrise && !item.fajr) {
                 item.firedCount++
                 if(item.repeat==0 || (item.maxOccurrences>0 && item.firedCount>=item.maxOccurrences)){
                     item.enabled=false;item.next=0

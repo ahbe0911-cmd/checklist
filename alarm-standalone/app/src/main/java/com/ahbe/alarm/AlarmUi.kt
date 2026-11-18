@@ -264,10 +264,45 @@ object AlarmUi {
             LinearLayout.LayoutParams(0,-2,1f))
         solarControls.addView(button(a,"موقعیت"){locationEditor(a){show(a)}},
             LinearLayout.LayoutParams(0,-2,1f).apply{marginStart=dp(a,8)})
+
+        // Offline Galikesh Fajr alarm, isolated from sunrise and regular alarms.
+        val fajr=all.firstOrNull{it.fajr}?:AlarmItem(
+            id="fajr-galikesh-primary",title="اذان صبح",
+            fajr=true,enabled=false,repeat=1,days=127,sound="preset:0"
+        )
+        val fajrCard=card(a,content)
+        val fajrHeader=LinearLayout(a).apply{
+            layoutDirection=View.LAYOUT_DIRECTION_RTL
+            gravity=Gravity.CENTER_VERTICAL
+        }
+        fajrCard.addView(fajrHeader)
+        fajrHeader.addView(txt(a,"اذان صبح",17f,navy,true),
+            LinearLayout.LayoutParams(0,-2,1f))
+        fajrHeader.addView(alarmSwitch(a,fajr.enabled,"فعال‌سازی اذان صبح"){
+            if(!fajr.enabled && FajrGalikesh.next(fajr,System.currentTimeMillis())==null){
+                Toast.makeText(a,"جدول اذان صبح فقط تا ۲۴ آبان ۱۴۰۶ است",
+                    Toast.LENGTH_LONG).show()
+                show(a)
+            }else{
+                fajr.enabled=!fajr.enabled
+                AlarmStore.update(a,fajr)
+                show(a)
+            }
+        })
+        fajrCard.addView(txt(a,"افق گالیکش • ۱ آبان ۱۴۰۵ تا ۲۴ آبان ۱۴۰۶",13f,muted))
+        val fajrToday=Instant.now().atZone(FajrGalikesh.ZONE).toLocalDate()
+        val fajrTodayTime=FajrGalikesh.timeFor(fajrToday)
+        fajrCard.addView(txt(a,"اذان صبح امروز: "+
+            (fajrTodayTime?.format(DateTimeFormatter.ofPattern("HH:mm"))?:"خارج از بازه جدول"),
+            13f,muted))
+        fajrCard.addView(txt(a,"صدای زنگ: "+AlarmSounds.label(fajr.sound),13f,muted))
+        fajrCard.addView(txt(a,"اجرای بعدی: "+nextText(a,fajr),13f,muted))
+        fajrCard.addView(button(a,"تنظیمات"){editFajr(a,fajr)},
+            LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(a,10)})
         content.addView(txt(a,"آلارم‌های معمولی",19f,navy,true).apply{
             setPadding(dp(a,2),dp(a,19),0,dp(a,5))
         })
-        all.filterNot{it.sunrise || it.id==AlarmTestReceiver.ID}.forEach{item->
+        all.filterNot{it.sunrise || it.fajr || it.id==AlarmTestReceiver.ID}.forEach{item->
             val block=card(a,content)
             val hero=LinearLayout(a).apply{
                 orientation=LinearLayout.HORIZONTAL
@@ -322,8 +357,26 @@ object AlarmUi {
                     Uri.parse("package:"+a.packageName)))}
             })
         }
+        AlarmSoundService.channel(a)
+        val nm=a.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val noticesEnabled=nm.areNotificationsEnabled()
+        val importance=nm.getNotificationChannel(AlarmSoundService.CHANNEL)?.importance
+            ?:NotificationManager.IMPORTANCE_NONE
+        if(!noticesEnabled || importance<NotificationManager.IMPORTANCE_HIGH){
+            content.addView(txt(a,"برای توقف زنگ هنگام استفاده از دوربین، اعلان آلارم را فعال کنید.",
+                12f,Color.rgb(186,83,55)))
+            content.addView(button(a,"تنظیم اعلان آلارم"){
+                runCatching{
+                    a.startActivity(Intent(if(noticesEnabled)
+                        Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS
+                        else Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply{
+                        putExtra(Settings.EXTRA_APP_PACKAGE,a.packageName)
+                        if(noticesEnabled)putExtra(Settings.EXTRA_CHANNEL_ID,AlarmSoundService.CHANNEL)
+                    })
+                }
+            })
+        }
         if(Build.VERSION.SDK_INT>=34){
-            val nm=a.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
             if(!nm.canUseFullScreenIntent()){
                 content.addView(txt(a,"برای نمایش زنگ روی صفحه قفل، مجوز نمایش تمام‌صفحه را بررسی کنید.",
                     12f,Color.rgb(186,83,55)))
@@ -341,7 +394,10 @@ object AlarmUi {
         DateTimeFormatter.ofPattern("HH:mm").withZone(zone).format(Instant.ofEpochMilli(time))
     private fun nextText(a:Activity,item:AlarmItem):String {
         if(!item.enabled)return "غیرفعال"
-        val time=AlarmScheduler.next(item,a)?:return "نامشخص؛ موقعیت یا تاریخ را بررسی کنید"
+        val time=AlarmScheduler.next(item,a)?:return if(item.fajr)
+            "پایان جدول: ۲۴ آبان ۱۴۰۶" else "نامشخص؛ موقعیت یا تاریخ را بررسی کنید"
+        if(item.fajr)return FajrGalikesh.dateLabel(time)+" - "+
+            displayTime(time,FajrGalikesh.ZONE)+" (ایران)"
         return persianDate(a,time)+" - "+displayTime(time)
     }
     private fun repeatName(i:AlarmItem)=when(i.repeat){
@@ -382,6 +438,92 @@ object AlarmUi {
                 val local=Instant.ofEpochMilli(chosen.timeInMillis).atZone(ZoneId.systemDefault()).toLocalDate()
                 onPick(local.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
             }.show()
+    }
+
+    /** Separate Fajr options; prayer times always come from the embedded PDF table. */
+    private fun editFajr(a:Activity,item:AlarmItem){
+        val copy=AlarmItem.from(item.toJson())
+        val root=container(a).apply{
+            background=shape(a,Color.WHITE,24)
+            clipToOutline=true
+            setPadding(dp(a,19),dp(a,18),dp(a,19),dp(a,14))
+        }
+        root.addView(txt(a,"تنظیم اذان صبح",24f,navy,true).apply{
+            typeface=headingFont(a)
+        })
+        root.addView(txt(a,"زمان اذان صبح طبق جدول داخلی گالیکش تنظیم می‌شود.",
+            13f,muted))
+        val scroll=ScrollView(a).apply{isVerticalScrollBarEnabled=false}
+        root.addView(scroll,LinearLayout.LayoutParams(-1,0,1f).apply{
+            topMargin=dp(a,12)
+        })
+        val layout=container(a).apply{setPadding(0,0,0,dp(a,18))}
+        scroll.addView(layout)
+        val daySection=group(a,layout,"روزهای هفته")
+        val checks=mutableListOf<CheckBox>()
+        val daysRow=LinearLayout(a).apply{
+            orientation=LinearLayout.HORIZONTAL
+            layoutDirection=View.LAYOUT_DIRECTION_RTL
+        }
+        daySection.addView(daysRow,LinearLayout.LayoutParams(-1,dp(a,48)).apply{
+            topMargin=dp(a,10)
+        })
+        days.forEachIndexed{index,letter->
+            val day=pillDay(a,letter,copy.days and (1 shl index)!=0)
+            checks.add(day)
+            daysRow.addView(day,LinearLayout.LayoutParams(0,dp(a,44),1f).apply{
+                marginStart=dp(a,2);marginEnd=dp(a,2)
+            })
+        }
+        val soundSection=group(a,layout,"صدا و هشدار")
+        soundSection.addView(label(a,"صدای زنگ"))
+        val name=txt(a,AlarmSounds.label(copy.sound),15f,navy,true)
+        soundSection.addView(name)
+        soundSection.addView(button(a,"انتخاب و پیش‌شنیدن صدا"){
+            soundPicker(a){selected->copy.sound=selected;name.text=AlarmSounds.label(selected)}
+        })
+        val vibrate=Switch(a).apply{
+            text="لرزش";typeface=vazir(a);isChecked=copy.vibrate
+        }
+        val gradual=Switch(a).apply{
+            text="افزایش تدریجی صدا";typeface=vazir(a);isChecked=copy.gradual
+        }
+        soundSection.addView(vibrate);soundSection.addView(gradual)
+        soundSection.addView(label(a,"تعویق پیش‌فرض"))
+        val snooze=dropdown(a,arrayOf("۵ دقیقه","۱۰ دقیقه","۱۵ دقیقه"),
+            when(copy.snooze){5->0;15->2;else->1})
+        soundSection.addView(snooze)
+        val actions=LinearLayout(a).apply{
+            orientation=LinearLayout.HORIZONTAL
+            layoutDirection=View.LAYOUT_DIRECTION_RTL
+            setPadding(0,dp(a,14),0,dp(a,2))
+        }
+        root.addView(actions)
+        val save=primaryButton(a,"ذخیره"){}
+        actions.addView(save,LinearLayout.LayoutParams(0,-2,2f))
+        val cancel=button(a,"انصراف"){}
+        actions.addView(cancel,LinearLayout.LayoutParams(0,-2,1f).apply{
+            marginStart=dp(a,8)
+        })
+        val dialog=showPremiumDialog(a,root,0.78f)
+        dialog.setOnDismissListener{stopPreview()}
+        cancel.setOnClickListener{dialog.dismiss()}
+        save.setOnClickListener{
+            copy.days=0
+            checks.forEachIndexed{index,check->
+                if(check.isChecked)copy.days=copy.days or (1 shl index)
+            }
+            if(copy.days==0){
+                Toast.makeText(a,"حداقل یک روز هفته را انتخاب کن",
+                    Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            copy.vibrate=vibrate.isChecked
+            copy.gradual=gradual.isChecked
+            copy.snooze=listOf(5,10,15)[snooze.selectedItemPosition.coerceIn(0,2)]
+            AlarmStore.update(a,copy)
+            dialog.dismiss();show(a)
+        }
     }
     private fun edit(a:Activity,item:AlarmItem,sunrise:Boolean){
         val copy=AlarmItem.from(item.toJson())
