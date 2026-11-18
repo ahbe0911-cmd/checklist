@@ -141,10 +141,39 @@ object AlarmUi {
             }else{AlarmStore.update(a,solar);show(a)}
             dialog.dismiss()
         },LinearLayout.LayoutParams(0,-2,1f).apply{marginStart=dp(a,6)})
+
+        // Independent offline Fajr alarm: the original sunrise alarm and normal alarms are untouched.
+        val fajr=all.firstOrNull{it.fajr} ?: AlarmItem(
+            id="fajr-galikesh-primary",title="اذان صبح",fajr=true,enabled=false,
+            repeat=1,days=127,sound="preset:0"
+        )
+        val fajrCard=card(a,content)
+        fajrCard.addView(txt(a,"اذان صبح",18f,navy,true))
+        fajrCard.addView(txt(a,"افق گالیکش • جدول ۱ آبان ۱۴۰۵ تا ۲۴ آبان ۱۴۰۶",13f,muted))
+        val fajrToday=Instant.now().atZone(FajrGalikesh.ZONE).toLocalDate()
+        val fajrTodayTime=FajrGalikesh.timeFor(fajrToday)
+        fajrCard.addView(txt(a,"اذان صبح امروز: "+
+            (fajrTodayTime?.format(DateTimeFormatter.ofPattern("HH:mm"))?:"خارج از بازه جدول"),
+            14f,muted))
+        fajrCard.addView(txt(a,"صدای زنگ: "+AlarmSounds.label(fajr.sound),13f,muted))
+        fajrCard.addView(txt(a,"اجرای بعدی: "+nextText(a,fajr),13f,muted))
+        val fajrControls=LinearLayout(a).apply{orientation=LinearLayout.HORIZONTAL}
+        fajrCard.addView(fajrControls)
+        fajrControls.addView(button(a,"تنظیمات"){editFajr(a,fajr,dialog)},
+            LinearLayout.LayoutParams(0,-2,1f))
+        fajrControls.addView(button(a,if(fajr.enabled)"فعال ✓" else "خاموش"){
+            if(!fajr.enabled && FajrGalikesh.next(fajr,System.currentTimeMillis())==null){
+                Toast.makeText(a,"جدول اذان صبح فقط تا ۲۴ آبان ۱۴۰۶ است",Toast.LENGTH_LONG).show()
+            }else{
+                fajr.enabled=!fajr.enabled
+                AlarmStore.update(a,fajr)
+                dialog.dismiss();show(a)
+            }
+        },LinearLayout.LayoutParams(0,-2,1f).apply{marginStart=dp(a,6)})
         content.addView(txt(a,"آلارم‌های معمولی",18f,navy,true).apply{
             setPadding(0,dp(a,20),0,dp(a,5))
         })
-        all.filterNot{it.sunrise}.forEach{item->
+        all.filterNot{it.sunrise || it.fajr}.forEach{item->
             val block=card(a,content)
             block.addView(txt(a,item.title,17f,navy,true))
             block.addView(txt(a,"%02d:%02d".format(item.hour,item.minute)+
@@ -235,7 +264,10 @@ object AlarmUi {
         DateTimeFormatter.ofPattern("HH:mm").withZone(zone).format(Instant.ofEpochMilli(time))
     private fun nextText(a:Activity,item:AlarmItem):String {
         if(!item.enabled)return "غیرفعال"
-        val time=AlarmScheduler.next(item,a)?:return "نامشخص؛ موقعیت یا تاریخ را بررسی کنید"
+        val time=AlarmScheduler.next(item,a)?:return if(item.fajr)
+            "پایان جدول: ۲۴ آبان ۱۴۰۶" else "نامشخص؛ موقعیت یا تاریخ را بررسی کنید"
+        if(item.fajr)return FajrGalikesh.dateLabel(time)+" - "+
+            displayTime(time,FajrGalikesh.ZONE)+" (ایران)"
         return persianDate(a,time)+" - "+displayTime(time)
     }
     private fun repeatName(i:AlarmItem)=when(i.repeat){
@@ -276,6 +308,62 @@ object AlarmUi {
                 val local=Instant.ofEpochMilli(chosen.timeInMillis).atZone(ZoneId.systemDefault()).toLocalDate()
                 onPick(local.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
             }.show()
+    }
+
+    /** Same independent alarm controls as sunrise, with PDF times fixed (not editable). */
+    private fun editFajr(a:Activity,item:AlarmItem,parent:Dialog) {
+        val copy=AlarmItem.from(item.toJson())
+        val layout=container(a).apply{setPadding(dp(a,18),dp(a,12),dp(a,18),dp(a,8))}
+        layout.addView(txt(a,"اوقات اذان صبح گالیکش طبق جدول داخلی برنامه تنظیم می‌شود.",13f,muted))
+        layout.addView(txt(a,"روزهای هفته",14f,navy,true))
+        val checks=mutableListOf<CheckBox>()
+        val row=LinearLayout(a).apply{orientation=LinearLayout.HORIZONTAL}
+        layout.addView(row)
+        days.forEachIndexed{index,day->
+            val check=CheckBox(a).apply{
+                text=day;typeface=vazir(a);buttonTintList=ColorStateList.valueOf(blue)
+                isChecked=copy.days and (1 shl index)!=0
+                setPadding(0,0,0,0)
+            }
+            checks.add(check)
+            row.addView(check,LinearLayout.LayoutParams(0,dp(a,45),1f))
+        }
+        layout.addView(txt(a,"صدای زنگ",14f,navy,true))
+        val soundName=txt(a,AlarmSounds.label(copy.sound),13f,muted)
+        layout.addView(soundName)
+        layout.addView(button(a,"انتخاب و پیش‌شنیدن صدا"){
+            soundPicker(a){sound->copy.sound=sound;soundName.text=AlarmSounds.label(sound)}
+        })
+        val vibrate=CheckBox(a).apply{text="لرزش";typeface=vazir(a);isChecked=copy.vibrate}
+        val gradual=CheckBox(a).apply{
+            text="افزایش تدریجی صدا";typeface=vazir(a);isChecked=copy.gradual
+        }
+        layout.addView(vibrate);layout.addView(gradual)
+        val snooze=Spinner(a).apply{
+            adapter=ArrayAdapter(a,android.R.layout.simple_spinner_dropdown_item,
+                listOf("۵ دقیقه","۱۰ دقیقه","۱۵ دقیقه"))
+            setSelection(when(copy.snooze){5->0;15->2;else->1})
+        }
+        layout.addView(txt(a,"تعویق پیش‌فرض",13f,muted));layout.addView(snooze)
+        val editor=AlertDialog.Builder(a).setTitle("تنظیمات اذان صبح")
+            .setView(ScrollView(a).apply{addView(layout)})
+            .setNegativeButton("انصراف",null).setPositiveButton("ذخیره",null).create()
+        editor.setOnDismissListener{stopPreview()}
+        editor.show()
+        editor.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener{
+            copy.days=0
+            checks.forEachIndexed{index,box->
+                if(box.isChecked)copy.days=copy.days or (1 shl index)
+            }
+            if(copy.days==0){
+                Toast.makeText(a,"حداقل یک روز هفته را انتخاب کن",Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            copy.vibrate=vibrate.isChecked;copy.gradual=gradual.isChecked
+            copy.snooze=listOf(5,10,15)[snooze.selectedItemPosition.coerceIn(0,2)]
+            AlarmStore.update(a,copy)
+            editor.dismiss();parent.dismiss();show(a)
+        }
     }
     private fun edit(a:Activity,item:AlarmItem,sunrise:Boolean,parent:Dialog) {
         val copy=AlarmItem.from(item.toJson())
