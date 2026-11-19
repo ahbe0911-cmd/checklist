@@ -40,6 +40,10 @@
             android:authorities="com.ahbe.checklist.noteimages"
             android:exported="false"
             android:grantUriPermissions="true"/>
+        <provider android:name=".PhotoZipProvider"
+            android:authorities="com.ahbe.checklist.photozips"
+            android:exported="false"
+            android:grantUriPermissions="true"/>
         <activity android:name=".alarm.AlarmRingActivity"
             android:exported="false"
             android:showWhenLocked="true"
