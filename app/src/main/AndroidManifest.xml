@@ -31,6 +31,10 @@
             android:authorities="com.ahbe.checklist.cameracapture"
             android:exported="false"
             android:grantUriPermissions="true"/>
+        <provider android:name=".PhotoZipProvider"
+            android:authorities="com.ahbe.checklist.photozips"
+            android:exported="false"
+            android:grantUriPermissions="true"/>
         <provider android:name=".NoteImageProvider"
             android:authorities="com.ahbe.checklist.noteimages"
             android:exported="false"
