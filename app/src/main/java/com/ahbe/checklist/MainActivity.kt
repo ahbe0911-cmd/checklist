@@ -242,6 +242,8 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         uiHandler.removeCallbacks(voiceTicker)
         compactPlayerTicker?.let { uiHandler.removeCallbacks(it) }
+        photoZipProgressDialog?.dismiss()
+        photoZipProgressDialog = null
         stopPlayback()
         super.onDestroy()
     }
@@ -1412,7 +1414,8 @@ class MainActivity : Activity() {
             }
         }
         if (children.isEmpty() && note.audioFilename == null &&
-            note.audioAttachments.isEmpty() && note.imageFilenames.isEmpty()) {
+            note.audioAttachments.isEmpty() && note.imageFilenames.isEmpty() &&
+            PhotoZipArchive.forNote(this, note.id).isEmpty()) {
             val empty = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
@@ -1424,6 +1427,8 @@ class MainActivity : Activity() {
             })
         }
 
+
+        addPhotoZipSection(list, note)
 
         // Record and send directly into the currently open note.
         val composer = LinearLayout(this).apply {
@@ -1657,6 +1662,7 @@ class MainActivity : Activity() {
         note.audioFilename?.let { storedAudioFile(it)?.delete() }
         note.audioAttachments.forEach { storedAudioFile(it.filename)?.delete() }
         note.imageFilenames.forEach { storedImageFile(it)?.delete() }
+        PhotoZipArchive.deleteForNote(this, note.id)
         notes.removeAll { it.id == note.id }
     }
 
@@ -2257,6 +2263,214 @@ class MainActivity : Activity() {
             }.show()
     }
 
+
+    /** ZIPs are independent attachments indexed by note ID; older note data stays untouched. */
+    private fun addPhotoZipSection(container: LinearLayout, note: Note) {
+        val section = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(12), dp(13), dp(12), dp(13))
+            background = shape(Color.WHITE, 14, softBorder)
+        }
+        container.addView(section, LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = dp(13)
+            bottomMargin = dp(8)
+        })
+        section.addView(label("بسته عکس‌ها (JPG / ZIP)", 16f, ink, true).apply {
+            typeface = titleFont
+        })
+        section.addView(label("تبدیل HEIC / HEIF و عکس‌های دیگر به JPG؛ حداکثر ۴۹۵ کیلوبایت برای هر عکس", 12f, muted),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) })
+        section.addView(actionLabel("＋ انتخاب چند عکس و ساخت ZIP") {
+            choosePhotosForZip(note)
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(9) })
+
+        PhotoZipArchive.forNote(this, note.id).forEach { archive ->
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
+                setPadding(dp(9), dp(10), dp(9), dp(10))
+                background = shape(Color.rgb(247, 249, 253), 11, softBorder)
+            }
+            section.addView(card, LinearLayout.LayoutParams(-1, -2).apply {
+                topMargin = dp(10)
+            })
+            card.addView(label(PhotoZipArchive.exportName(archive.title), 14f, ink, true).apply {
+                typeface = titleFont
+                maxLines = 2
+            })
+            val approxKb = (archive.bytes + 1023L) / 1024L
+            card.addView(label(fa(archive.photoCount) + " عکس  |  حجم ZIP: " +
+                fa(approxKb.toInt()) + " کیلوبایت", 11f, muted),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+
+            val first = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
+            }
+            card.addView(first, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
+            first.addView(actionLabel("اشتراک‌گذاری") { sharePhotoZip(archive) },
+                LinearLayout.LayoutParams(0, -2, 1f))
+            first.addView(actionLabel("ذخیره در گوشی") { downloadPhotoZip(archive) },
+                LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(6) })
+
+            val second = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
+            }
+            card.addView(second, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+            second.addView(actionLabel("تغییر نام") { renamePhotoZip(archive) },
+                LinearLayout.LayoutParams(0, -2, 1f))
+            second.addView(actionLabel("حذف فایل") { confirmDeletePhotoZip(archive) },
+                LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(6) })
+        }
+    }
+
+    private fun choosePhotosForZip(note: Note) {
+        getSharedPreferences("photo_zip_workflow", MODE_PRIVATE).edit()
+            .putString("pending_note_id", note.id).apply()
+        val picker = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        }
+        runCatching { startActivityForResult(picker, 2093) }.onFailure {
+            Toast.makeText(this, "امکان انتخاب عکس از گالری وجود ندارد", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun nameNewPhotoZip(note: Note, uris: List<Uri>) {
+        val field = EditText(this).apply {
+            setSingleLine(true)
+            setText(PhotoZipArchive.safeTitle(note.text))
+            selectAll()
+            typeface = titleFont
+            setPadding(dp(18), dp(12), dp(18), dp(12))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("نام فایل ZIP")
+            .setMessage("تعداد عکس‌های انتخاب‌شده: " + fa(uris.size))
+            .setView(field)
+            .setNegativeButton("انصراف", null)
+            .setPositiveButton("ساخت ZIP") { _, _ ->
+                processPhotoZip(note.id, field.text.toString(), uris)
+            }.show()
+    }
+
+    private var photoZipProgressDialog: AlertDialog? = null
+    private var photoZipBusy = false
+
+    private fun processPhotoZip(noteId: String, title: String, images: List<Uri>) {
+        if (photoZipBusy) {
+            Toast.makeText(this, "ساخت فایل دیگری در حال انجام است", Toast.LENGTH_SHORT).show()
+            return
+        }
+        photoZipBusy = true
+        val status = label("عملیات در حال انجام است…", 14f, ink, true).apply {
+            gravity = Gravity.CENTER
+        }
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(24), dp(20), dp(24), dp(20))
+            addView(ProgressBar(this@MainActivity), LinearLayout.LayoutParams(dp(42), dp(42)))
+            addView(status, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        }
+        val dialog = AlertDialog.Builder(this).setView(body).setCancelable(false).create()
+        photoZipProgressDialog = dialog
+        dialog.show()
+        Thread {
+            val result = runCatching {
+                PhotoZipArchive.create(this, noteId, title, images) { processed, total ->
+                    runOnUiThread {
+                        if (!isFinishing && !isDestroyed) {
+                            status.text = "عملیات در حال انجام است… " +
+                                fa(processed) + " از " + fa(total)
+                        }
+                    }
+                }
+            }
+            runOnUiThread {
+                photoZipBusy = false
+                if (photoZipProgressDialog === dialog) photoZipProgressDialog = null
+                dialog.dismiss()
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (result.isSuccess) {
+                    Toast.makeText(this, "فایل ZIP با موفقیت ذخیره شد", Toast.LENGTH_LONG).show()
+                    if (currentPageNoteId == noteId) renderOpenNotePage()
+                } else {
+                    Toast.makeText(this, "ساخت ZIP انجام نشد: " +
+                        (result.exceptionOrNull()?.message ?: "خطای ناشناخته"),
+                        Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
+    }
+
+    private fun renamePhotoZip(archive: PhotoZipArchive.Archive) {
+        val field = EditText(this).apply {
+            setText(archive.title)
+            selectAll()
+            setSingleLine(true)
+            typeface = titleFont
+            setPadding(dp(18), dp(12), dp(18), dp(12))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("تغییر نام ZIP")
+            .setView(field)
+            .setNegativeButton("انصراف", null)
+            .setPositiveButton("ذخیره") { _, _ ->
+                val name = field.text.toString().trim()
+                if (name.isBlank()) {
+                    Toast.makeText(this, "نام نمی‌تواند خالی باشد", Toast.LENGTH_SHORT).show()
+                } else {
+                    runCatching { PhotoZipArchive.rename(this, archive.id, name) }
+                        .onSuccess { renderOpenNotePage() }
+                        .onFailure { Toast.makeText(this, "تغییر نام انجام نشد", Toast.LENGTH_LONG).show() }
+                }
+            }.show()
+    }
+
+    private fun confirmDeletePhotoZip(archive: PhotoZipArchive.Archive) {
+        AlertDialog.Builder(this)
+            .setTitle("حذف فایل ZIP")
+            .setMessage("فایل «" + PhotoZipArchive.exportName(archive.title) +
+                "» از این یادداشت حذف شود؟ عکس‌های اصلی گوشی تغییر نمی‌کنند.")
+            .setNegativeButton("انصراف", null)
+            .setPositiveButton("حذف") { _, _ ->
+                if (PhotoZipArchive.delete(this, archive.id)) renderOpenNotePage()
+                else Toast.makeText(this, "حذف ZIP انجام نشد", Toast.LENGTH_LONG).show()
+            }.show()
+    }
+
+    private fun sharePhotoZip(archive: PhotoZipArchive.Archive) {
+        runCatching {
+            val uri = PhotoZipArchive.uri(this, archive.id)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "application/zip"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                clipData = android.content.ClipData.newUri(contentResolver, "ZIP", uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(send, "ارسال فایل ZIP"))
+        }.onFailure {
+            Toast.makeText(this, "اشتراک‌گذاری فایل در دسترس نیست", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun downloadPhotoZip(archive: PhotoZipArchive.Archive) {
+        getSharedPreferences("photo_zip_workflow", MODE_PRIVATE).edit()
+            .putString("exporting_zip_id", archive.id).apply()
+        val document = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/zip"
+            putExtra(Intent.EXTRA_TITLE, PhotoZipArchive.exportName(archive.title))
+        }
+        runCatching { startActivityForResult(document, 2094) }.onFailure {
+            Toast.makeText(this, "محل ذخیره در دسترس نیست", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun pickImageForNote(note: Note) {
         pickingImageForNoteId = note.id
         getSharedPreferences("checklist_native", MODE_PRIVATE).edit()
@@ -2299,6 +2513,43 @@ class MainActivity : Activity() {
     @Deprecated("Uses the platform document picker for images")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 2093) {
+            val preferences = getSharedPreferences("photo_zip_workflow", MODE_PRIVATE)
+            val noteId = preferences.getString("pending_note_id", null)
+            preferences.edit().remove("pending_note_id").apply()
+            val note = notes.firstOrNull { it.id == noteId }
+            if (resultCode == RESULT_OK && note != null) {
+                val selected = mutableListOf<Uri>()
+                data?.clipData?.let { clips ->
+                    for (i in 0 until clips.itemCount) selected.add(clips.getItemAt(i).uri)
+                }
+                data?.data?.let { selected.add(it) }
+                val unique = selected.distinctBy { it.toString() }
+                if (unique.isNotEmpty()) nameNewPhotoZip(note, unique)
+            }
+            return
+        }
+        if (requestCode == 2094) {
+            val preferences = getSharedPreferences("photo_zip_workflow", MODE_PRIVATE)
+            val id = preferences.getString("exporting_zip_id", null)
+            preferences.edit().remove("exporting_zip_id").apply()
+            val destination = if (resultCode == RESULT_OK) data?.data else null
+            val source = id?.let { PhotoZipArchive.file(this, it) }
+            if (destination != null && source != null) {
+                Thread {
+                    val success = runCatching {
+                        contentResolver.openOutputStream(destination, "w")?.use { output ->
+                            source.inputStream().use { input -> input.copyTo(output) }
+                        } ?: error("Unable to create ZIP")
+                    }.isSuccess
+                    runOnUiThread {
+                        Toast.makeText(this, if (success) "فایل ZIP در گوشی ذخیره شد"
+                            else "ذخیره ZIP انجام نشد", Toast.LENGTH_LONG).show()
+                    }
+                }.start()
+            }
+            return
+        }
         if (requestCode == 2091 || requestCode == 2092) {
             val uri=if(resultCode==RESULT_OK)data?.data else null
             if(uri!=null) {
