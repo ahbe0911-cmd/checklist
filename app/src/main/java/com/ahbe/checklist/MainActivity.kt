@@ -61,7 +61,7 @@ class MainActivity : Activity() {
         val text: String,
         var completed: Boolean,
         val color: Int,
-        val audioFilename: String? = null,
+        var audioFilename: String? = null,
         val audioDurationMs: Long = 0L,
         var category: String = "کتابخانه",
         var parentId: String? = null,
@@ -123,6 +123,7 @@ class MainActivity : Activity() {
     private var notePage: LinearLayout? = null
     private var currentPageNoteId: String? = null
     private var pageVoiceButton: ImageButton? = null
+    private var pageCancelVoiceButton: ImageButton? = null
     private var pageVoiceStatus: TextView? = null
     private var pageSendButton: ImageButton? = null
 
@@ -157,6 +158,7 @@ class MainActivity : Activity() {
     private var recordingStartedAt = 0L
     private var pendingVoiceFilename: String? = null
     private var pendingVoiceDurationMs = 0L
+    private var voiceDraftAwaitToken = 0
     private var voicePlayer: MediaPlayer? = null
     private var playingNoteId: String? = null
     private var compactPlayerTicker: Runnable? = null
@@ -1146,8 +1148,10 @@ class MainActivity : Activity() {
             }, LinearLayout.LayoutParams(dp(36), dp(36)))
             preview.addView(label(formatDuration(note.audioDurationMs), 12f, muted),
                 LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(10) })
-            bubble.addView(voiceActionBar(note.audioFilename),
-                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+            val savedAudio = note.audioFilename!!
+            bubble.addView(voiceActionBar(savedAudio) {
+                confirmDeleteAudio(note, savedAudio)
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         }
         // The action buttons share one footer with any available metadata.
         val footer = LinearLayout(this).apply {
@@ -1307,6 +1311,25 @@ class MainActivity : Activity() {
         val children = notes.filter { it.parentId == note.id }
         children.forEachIndexed { index, child -> addNoteCard(child, index + 1, list) }
 
+        note.audioFilename?.let { filename ->
+            val voiceCard = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
+                setPadding(dp(16), dp(13), dp(16), dp(13))
+                background = shape(Color.rgb(233, 247, 255), 20)
+                elevation = dp(2).toFloat()
+            }
+            list.addView(voiceCard, LinearLayout.LayoutParams(-1, -2).apply {
+                bottomMargin = dp(9)
+            })
+            voiceCard.addView(label("صدای اصلی یادداشت", 15f, ink, true))
+            voiceCard.addView(compactAudioPlayer(filename, note.audioDurationMs),
+                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
+            voiceCard.addView(voiceActionBar(filename) {
+                confirmDeleteAudio(note, filename)
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
+        }
+
         note.audioAttachments.forEach { attachment ->
             val voiceCard = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -1323,8 +1346,9 @@ class MainActivity : Activity() {
             })
             voiceCard.addView(compactAudioPlayer(attachment.filename, attachment.durationMs),
                 LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
-            voiceCard.addView(voiceActionBar(attachment.filename),
-                LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
+            voiceCard.addView(voiceActionBar(attachment.filename) {
+                confirmDeleteAudio(note, attachment.filename)
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
         }
         // Gallery-style thumbnails live on this page, alongside voice and text.
         if (note.imageFilenames.isNotEmpty()) {
@@ -1384,7 +1408,8 @@ class MainActivity : Activity() {
                 })
             }
         }
-        if (children.isEmpty() && note.audioAttachments.isEmpty() && note.imageFilenames.isEmpty()) {
+        if (children.isEmpty() && note.audioFilename == null &&
+            note.audioAttachments.isEmpty() && note.imageFilenames.isEmpty()) {
             val empty = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
@@ -1436,6 +1461,26 @@ class MainActivity : Activity() {
         }
         pageVoiceButton = mic
         composer.addView(mic, LinearLayout.LayoutParams(dp(45), dp(45)).apply {
+            marginStart = dp(6)
+        })
+        val cancelVoice = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_close)
+            imageTintList = ColorStateList.valueOf(Color.rgb(190, 73, 78))
+            background = shape(Color.rgb(255, 240, 243), 17)
+            setPadding(dp(11), dp(11), dp(11), dp(11))
+            contentDescription = "لغو ضبط و حذف صدای ضبط‌شده"
+            visibility = View.GONE
+            setOnClickListener {
+                val target = getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE)
+                    .getString("target_note_id", voiceTargetNoteId)
+                if (target == note.id) {
+                    discardVoiceRecording()
+                    updatePageVoiceControls()
+                }
+            }
+        }
+        pageCancelVoiceButton = cancelVoice
+        composer.addView(cancelVoice, LinearLayout.LayoutParams(dp(45), dp(45)).apply {
             marginStart = dp(6)
         })
         val send = ImageButton(this).apply {
@@ -1516,6 +1561,8 @@ class MainActivity : Activity() {
         val targetId = prefs.getString("target_note_id", voiceTargetNoteId)
         val recording = VoiceRecordingService.isRecording && targetId == noteId
         val ready = pendingVoiceFilename != null && (voiceTargetNoteId == noteId || targetId == noteId)
+        pageCancelVoiceButton?.visibility =
+            if (recording || ready) View.VISIBLE else View.GONE
         button.setImageResource(if (recording) R.drawable.ic_stop_voice else R.drawable.ic_microphone)
         button.background = if (recording) shape(Color.rgb(203, 62, 73), 12)
             else shape(Color.rgb(240, 245, 251), 12, softBorder)
@@ -1542,7 +1589,8 @@ class MainActivity : Activity() {
                 return
             }
             finishVoiceRecording()
-            awaitVoiceDraft(note.id, 0)
+            voiceDraftAwaitToken++
+            awaitVoiceDraft(note.id, 0, voiceDraftAwaitToken)
             return
         }
         syncVoiceDraft()
@@ -1559,14 +1607,15 @@ class MainActivity : Activity() {
         uiHandler.postDelayed({ updatePageVoiceControls() }, 650L)
     }
 
-    private fun awaitVoiceDraft(noteId: String, tries: Int) {
+    private fun awaitVoiceDraft(noteId: String, tries: Int, token: Int) {
         uiHandler.postDelayed({
+            if (token != voiceDraftAwaitToken) return@postDelayed
             syncVoiceDraft()
             updatePageVoiceControls()
             if (pendingVoiceFilename != null && voiceTargetNoteId == noteId) {
                 showVoiceNoteNameDialog()
             } else if (tries < 15) {
-                awaitVoiceDraft(noteId, tries + 1)
+                awaitVoiceDraft(noteId, tries + 1, token)
             } else {
                 Toast.makeText(this, "فایل ضبط نشد؛ دوباره امتحان کن", Toast.LENGTH_LONG).show()
             }
@@ -1584,6 +1633,7 @@ class MainActivity : Activity() {
         notePage?.let { screenRoot.removeView(it) }
         notePage = null
         pageVoiceButton = null
+        pageCancelVoiceButton = null
         pageVoiceStatus = null
         pageSendButton = null
         if (::homePage.isInitialized) {
@@ -1772,8 +1822,10 @@ class MainActivity : Activity() {
             content.addView(row)
             row.addView(actionLabel("پخش") { toggleVoicePlayback(note) },
                 LinearLayout.LayoutParams(0, -2, 1f))
-            row.addView(voiceActionBar(note.audioFilename),
-                LinearLayout.LayoutParams(0, -2, 2f).apply { marginStart = dp(6) })
+            val savedAudio = note.audioFilename!!
+            row.addView(voiceActionBar(savedAudio) {
+                confirmDeleteAudio(note, savedAudio) { detail.dismiss() }
+            }, LinearLayout.LayoutParams(0, -2, 2f).apply { marginStart = dp(6) })
         }
 
         if (note.imageFilenames.isNotEmpty()) {
@@ -1834,12 +1886,10 @@ class MainActivity : Activity() {
                         .setMessage("فایل صوتی از این یادداشت حذف شود؟")
                         .setNegativeButton("انصراف", null)
                         .setPositiveButton("حذف") { _, _ ->
-                            note.audioAttachments.remove(attachment)
-                            storedAudioFile(attachment.filename)?.delete()
-                            saveNotes()
-                            renderNotes()
-                            detail.dismiss()
-                            showNoteDetail(note)
+                            if (deleteAudioFromNote(note, attachment.filename)) {
+                                detail.dismiss()
+                                showNoteDetail(note)
+                            }
                         }.show()
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 content.addView(voiceActionBar(attachment.filename),
@@ -2354,7 +2404,9 @@ class MainActivity : Activity() {
         addView(label(caption, 11f, tint, true))
     }
 
-    private fun voiceActionBar(filename: String): LinearLayout = LinearLayout(this).apply {
+    private fun voiceActionBar(
+        filename: String, onDelete: (() -> Unit)? = null
+    ): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         layoutDirection = View.LAYOUT_DIRECTION_RTL
         gravity = Gravity.CENTER_VERTICAL
@@ -2366,6 +2418,44 @@ class MainActivity : Activity() {
         addView(audioActionButton("دانلود", R.drawable.ic_download_audio, ink) {
             saveAudioToDevice(filename)
         }, LinearLayout.LayoutParams(0, dp(39), 1f))
+        onDelete?.let { delete ->
+            addView(audioActionButton("حذف", R.drawable.ic_trash,
+                Color.rgb(190, 73, 78)) { delete() },
+                LinearLayout.LayoutParams(0, dp(39), 0.8f).apply {
+                    marginStart = dp(6)
+                })
+        }
+    }
+
+    private fun confirmDeleteAudio(
+        note: Note, filename: String, onDeleted: (() -> Unit)? = null
+    ) {
+        if (note.audioFilename != filename &&
+            note.audioAttachments.none { it.filename == filename }) return
+        AlertDialog.Builder(this)
+            .setTitle("حذف فایل صوتی")
+            .setMessage("این صدای ذخیره‌شده حذف شود؟ متن و سایر بخش‌های یادداشت باقی می‌مانند.")
+            .setNegativeButton("انصراف", null)
+            .setPositiveButton("حذف") { _, _ ->
+                if (deleteAudioFromNote(note, filename)) onDeleted?.invoke()
+            }.show()
+    }
+
+    private fun deleteAudioFromNote(note: Note, filename: String): Boolean {
+        val isMainAudio = note.audioFilename == filename
+        val isAttachment = note.audioAttachments.any { it.filename == filename }
+        if (!isMainAudio && !isAttachment) return false
+        stopPlayback()
+        val file = storedAudioFile(filename)
+        if (file != null && file.isFile && !file.delete()) {
+            Toast.makeText(this, "حذف فایل صوتی انجام نشد", Toast.LENGTH_LONG).show()
+            return false
+        }
+        if (isMainAudio) note.audioFilename = null
+        if (isAttachment) note.audioAttachments.removeAll { it.filename == filename }
+        saveNotes()
+        renderNotes()
+        return true
     }
 
     /**
@@ -2563,8 +2653,12 @@ class MainActivity : Activity() {
             pendingVoiceFilename = stored
             pendingVoiceDurationMs = prefs.getLong("draft_duration", 0L)
             voiceTargetNoteId = prefs.getString("target_note_id", null)
-        } else if (stored != null) {
-            prefs.edit().remove("draft_filename").remove("draft_duration").apply()
+        } else {
+            if (stored != null) {
+                prefs.edit().remove("draft_filename").remove("draft_duration").apply()
+            }
+            pendingVoiceFilename = null
+            pendingVoiceDurationMs = 0L
         }
     }
 
@@ -2618,11 +2712,11 @@ class MainActivity : Activity() {
     }
 
     private fun discardVoiceRecording() {
-        if (VoiceRecordingService.isRecording) {
-            startService(Intent(this, VoiceRecordingService::class.java).apply {
-                action = VoiceRecordingService.ACTION_CANCEL
-            })
-        }
+        // CANCEL also removes a draft saved by a previously queued STOP.
+        startService(Intent(this, VoiceRecordingService::class.java).apply {
+            action = VoiceRecordingService.ACTION_CANCEL
+        })
+        voiceDraftAwaitToken++
         uiHandler.removeCallbacks(voiceTicker)
         pendingVoiceFilename?.let { storedAudioFile(it)?.delete() }
         pendingVoiceFilename = null
@@ -2631,7 +2725,13 @@ class MainActivity : Activity() {
         getSharedPreferences(VoiceRecordingService.PREFS, MODE_PRIVATE).edit()
             .remove("draft_filename").remove("draft_duration")
             .remove("target_note_id").apply()
-        uiHandler.postDelayed({ refreshVoiceComposer() }, 350L)
+        uiHandler.postDelayed({
+            syncVoiceDraft()
+            refreshVoiceComposer()
+            updatePageVoiceControls()
+        }, 350L)
+        refreshVoiceComposer()
+        updatePageVoiceControls()
     }
 
     private fun showVoiceNoteNameDialog() {
@@ -2664,7 +2764,7 @@ class MainActivity : Activity() {
         val dialog = AlertDialog.Builder(this)
             .setTitle("نام‌گذاری پیام صوتی")
             .setView(content)
-            .setNegativeButton("انصراف", null)
+            .setNegativeButton("لغو و حذف ضبط") { _, _ -> discardVoiceRecording() }
             .setPositiveButton("ثبت پیام صوتی", null)
             .create()
         dialog.setOnShowListener {

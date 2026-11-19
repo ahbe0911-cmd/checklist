@@ -53,7 +53,10 @@ class VoiceRecordingService : Service() {
         when (intent?.action) {
             ACTION_START -> if (!isRecording) startRecording()
             ACTION_STOP -> finishRecording(true)
-            ACTION_CANCEL -> finishRecording(false)
+            ACTION_CANCEL -> {
+                if (recorder != null) finishRecording(false)
+                else discardSavedDraft()
+            }
         }
         return START_NOT_STICKY
     }
@@ -120,6 +123,17 @@ class VoiceRecordingService : Service() {
             .build()
     }
 
+    private fun discardSavedDraft() {
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val savedName = prefs.getString("draft_filename", null)
+        savedName?.takeIf { Regex("^[0-9a-fA-F-]{36}\\.m4a$").matches(it) }
+            ?.let { File(File(filesDir, "voice_notes"), it).delete() }
+        prefs.edit().remove("draft_filename").remove("draft_duration")
+            .remove("target_note_id").commit()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
     private fun finishRecording(keep: Boolean) {
         val current = recorder
         val name = filename
@@ -138,6 +152,14 @@ class VoiceRecordingService : Service() {
                 .commit()
         } else {
             file?.delete()
+            if (!keep) {
+                val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+                val saved = prefs.getString("draft_filename", null)
+                saved?.takeIf { Regex("^[0-9a-fA-F-]{36}\\.m4a$").matches(it) }
+                    ?.let { File(File(filesDir, "voice_notes"), it).delete() }
+                prefs.edit().remove("draft_filename").remove("draft_duration")
+                    .remove("target_note_id").commit()
+            }
         }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
