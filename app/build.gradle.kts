@@ -11,8 +11,8 @@ android {
         applicationId = "com.ahbe.checklist"
         minSdk = 26
         targetSdk = 34
-        versionCode = 15
-        versionName = "1.11.2"
+        versionCode = 16
+        versionName = "1.12.0"
     }
 
     compileOptions {
