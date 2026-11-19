@@ -129,6 +129,7 @@ class MainActivity : Activity() {
 
     private lateinit var headingLabel: TextView
     private lateinit var searchField: EditText
+    private var searchButton: ImageButton? = null
 
     private fun loadTypeface(path: String): Typeface =
         runCatching { Typeface.createFromAsset(assets, path) }.getOrDefault(Typeface.DEFAULT)
@@ -339,6 +340,18 @@ class MainActivity : Activity() {
         headerTop.addView(settingsButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
             marginStart = dp(10)
         })
+        // Keep search off the home screen until the user explicitly opens it.
+        searchButton = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_search)
+            imageTintList = ColorStateList.valueOf(indigo)
+            background = shape(Color.rgb(240, 239, 253), 13)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            contentDescription = "بازکردن جست‌وجوی یادداشت‌ها"
+            setOnClickListener { showSearchDialog() }
+        }
+        headerTop.addView(searchButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+            marginStart = dp(6)
+        })
         categoryBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_RTL
@@ -355,36 +368,6 @@ class MainActivity : Activity() {
             topMargin = dp(11)
         })
         renderCategoryTabs()
-
-        val searchRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        header.addView(searchRow, LinearLayout.LayoutParams(-1, dp(44)).apply {
-            topMargin = dp(12)
-        })
-
-        searchField = EditText(this).apply {
-            hint = "جست‌وجو در یادداشت‌ها"
-            textSize = searchTextSize.toFloat()
-            setTextColor(ink)
-            setHintTextColor(Color.rgb(148, 163, 184))
-            background = shape(Color.WHITE, 16)
-            setSingleLine(true)
-            setPadding(dp(11), 0, dp(11), 0)
-            compoundDrawablePadding = dp(6)
-            setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0)
-        }
-        searchField.typeface = textFont
-        searchRow.addView(searchField, LinearLayout.LayoutParams(-1, dp(41)))
-        searchField.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                search = s?.toString()?.trim().orEmpty()
-                renderNotes()
-            }
-            override fun afterTextChanged(s: Editable?) {}
-        })
 
         val main = FrameLayout(this)
         root.addView(main, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -1029,6 +1012,114 @@ class MainActivity : Activity() {
         )
     }
 
+    private fun showSearchDialog() {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(20), dp(8), dp(20), dp(6))
+        }
+        val hint = label("جست‌وجو در سربرگ «" + selectedCategory + "»", 12f, muted)
+        panel.addView(hint, LinearLayout.LayoutParams(-1, -2).apply {
+            bottomMargin = dp(9)
+        })
+        searchField = EditText(this).apply {
+            this.hint = "نام یا متن یادداشت را بنویسید"
+            textSize = searchTextSize.toFloat()
+            typeface = textFont
+            setTextColor(ink)
+            setHintTextColor(muted)
+            setSingleLine(true)
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            imeOptions = EditorInfo.IME_ACTION_SEARCH
+            background = shape(Color.rgb(246, 245, 255), 13, softBorder)
+            setPadding(dp(14), 0, dp(14), 0)
+            setText(search)
+            setSelection(text.length)
+        }
+        panel.addView(searchField, LinearLayout.LayoutParams(-1, dp(49)))
+        val resultsCount = label("", 12f, muted, true).apply {
+            setPadding(0, dp(12), 0, dp(6))
+        }
+        panel.addView(resultsCount, LinearLayout.LayoutParams(-1, -2))
+        val results = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+        panel.addView(ScrollView(this).apply {
+            isFillViewport = false
+            addView(results, FrameLayout.LayoutParams(-1, -2))
+        }, LinearLayout.LayoutParams(-1, dp(250)))
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("جست‌وجوی یادداشت‌ها")
+            .setView(panel)
+            .setNegativeButton("بستن", null)
+            .setNeutralButton("پاک کردن جست‌وجو") { _, _ ->
+                search = ""
+                renderNotes()
+                searchButton?.imageTintList = ColorStateList.valueOf(indigo)
+                searchButton?.contentDescription = "بازکردن جست‌وجوی یادداشت‌ها"
+            }
+            .create()
+
+        fun updateResults() {
+            results.removeAllViews()
+            val matches = notes.filter { note ->
+                val searchMatch = note.text.contains(search, ignoreCase = true) ||
+                    notes.any { it.parentId == note.id &&
+                        it.text.contains(search, ignoreCase = true) }
+                note.category == selectedCategory && note.parentId == null && searchMatch
+            }
+            resultsCount.text = if (search.isBlank()) {
+                "برای جست‌وجو عبارتی وارد کنید."
+            } else "نتایج: " + fa(matches.size) + " یادداشت"
+            if (search.isBlank()) return
+            if (matches.isEmpty()) {
+                results.addView(label("یادداشتی پیدا نشد.", 13f, muted).apply {
+                    gravity = Gravity.CENTER
+                    setPadding(dp(8), dp(20), dp(8), dp(20))
+                })
+            }
+            matches.forEach { note ->
+                results.addView(label(note.text, 14f, ink, true).apply {
+                    typeface = textFont
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                    background = shape(Color.rgb(248, 249, 255), 11, softBorder)
+                    setPadding(dp(13), dp(12), dp(13), dp(12))
+                    isClickable = true
+                    isFocusable = true
+                    contentDescription = "بازکردن یادداشت " + note.text
+                    setOnClickListener {
+                        dialog.dismiss()
+                        showNotePage(note)
+                    }
+                }, LinearLayout.LayoutParams(-1, -2).apply {
+                    bottomMargin = dp(7)
+                })
+            }
+        }
+        searchField.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                search = s?.toString()?.trim().orEmpty()
+                renderNotes()
+                searchButton?.imageTintList =
+                    ColorStateList.valueOf(if (search.isEmpty()) indigo else emerald)
+                searchButton?.contentDescription =
+                    if (search.isEmpty()) "بازکردن جست‌وجوی یادداشت‌ها"
+                    else "جست‌وجوی فعال؛ بازکردن جست‌وجو"
+                updateResults()
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+        updateResults()
+        dialog.show()
+        searchField.requestFocus()
+        dialog.window?.setSoftInputMode(
+            android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
+    }
+
     private fun renderNotes() {
         if (!::noteList.isInitialized) return
         noteList.removeAllViews()
@@ -1357,12 +1448,12 @@ class MainActivity : Activity() {
                 setPadding(dp(4), dp(10), dp(4), dp(8))
             }, LinearLayout.LayoutParams(-1, -2))
             val gallery = android.widget.GridLayout(this).apply {
-                columnCount = 3
+                columnCount = 2
                 alignmentMode = android.widget.GridLayout.ALIGN_BOUNDS
                 useDefaultMargins = false
             }
             list.addView(gallery, LinearLayout.LayoutParams(-1, -2))
-            val tileWidthPx = (resources.displayMetrics.widthPixels - dp(56)) / 3
+            val tileWidthPx = (resources.displayMetrics.widthPixels - dp(56)) / 2
             note.imageFilenames.forEachIndexed { index, filename ->
                 val file = storedImageFile(filename)
                 if (file == null || !file.isFile) return@forEachIndexed
@@ -1370,42 +1461,53 @@ class MainActivity : Activity() {
                     orientation = LinearLayout.VERTICAL
                     gravity = Gravity.CENTER
                     background = shape(Color.WHITE, 12, softBorder)
-                    setPadding(dp(5), dp(6), dp(5), dp(6))
+                    setPadding(dp(8), dp(8), dp(8), dp(8))
                 }
                 gallery.addView(tile, android.widget.GridLayout.LayoutParams().apply {
                     width = tileWidthPx
-                    height = dp(125)
-                    columnSpec = android.widget.GridLayout.spec(index % 3)
-                    rowSpec = android.widget.GridLayout.spec(index / 3)
+                    height = dp(231)
+                    columnSpec = android.widget.GridLayout.spec(index % 2)
+                    rowSpec = android.widget.GridLayout.spec(index / 2)
                     setMargins(dp(2), dp(2), dp(2), dp(2))
                 })
                 val preview = ImageView(this).apply {
-                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    scaleType = ImageView.ScaleType.FIT_CENTER
                     background = shape(Color.rgb(242, 246, 250), 9)
                     val options = android.graphics.BitmapFactory.Options().apply {
                         inJustDecodeBounds = true
                     }
                     android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
-                    val sample = (maxOf(options.outWidth, options.outHeight) / 260).coerceAtLeast(1)
+                    val sample = (maxOf(options.outWidth, options.outHeight) / 650).coerceAtLeast(1)
                     val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath,
                         android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
                     setImageBitmap(bitmap)
-                    contentDescription = "بازکردن " + imageTitle(filename)
+                    contentDescription = "نمایش کامل " + imageTitle(filename)
                     setOnClickListener { openImageInPhone(filename) }
                 }
-                tile.addView(preview, LinearLayout.LayoutParams(-1, dp(78)))
-                tile.addView(label(imageTitle(filename), 11f, ink, true).apply {
+                tile.addView(preview, LinearLayout.LayoutParams(-1, dp(153)))
+                tile.addView(label(imageTitle(filename), 12f, ink, true).apply {
                     typeface = titleFont
                     gravity = Gravity.CENTER
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
                     setOnClickListener { openImageInPhone(filename) }
-                }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-                tile.addView(label("تغییر نام", 10f, indigo).apply {
-                    typeface = titleFont
+                }, LinearLayout.LayoutParams(-1, dp(24)).apply { topMargin = dp(4) })
+                val imageActions = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    layoutDirection = View.LAYOUT_DIRECTION_RTL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                tile.addView(imageActions, LinearLayout.LayoutParams(-1, dp(33)))
+                imageActions.addView(label("تغییر نام", 11f, indigo, true).apply {
                     gravity = Gravity.CENTER
+                    isClickable = true
                     setOnClickListener { renameImage(filename) }
-                })
+                }, LinearLayout.LayoutParams(0, -1, 1f))
+                imageActions.addView(label("حذف", 11f, Color.rgb(184, 65, 82), true).apply {
+                    gravity = Gravity.CENTER
+                    isClickable = true
+                    setOnClickListener { confirmDeleteImage(note, filename) }
+                }, LinearLayout.LayoutParams(0, -1, 1f))
             }
         }
         if (children.isEmpty() && note.audioFilename == null &&
@@ -1856,35 +1958,51 @@ class MainActivity : Activity() {
             note.imageFilenames.toList().forEach { name ->
                 val file = storedImageFile(name)
                 if (file != null && file.isFile) {
-                    val picture = ImageView(this).apply {
-                        scaleType = ImageView.ScaleType.CENTER_CROP
-                        val bounds = android.graphics.BitmapFactory.Options().apply {
-                            inJustDecodeBounds = true
-                        }
-                        android.graphics.BitmapFactory.decodeFile(file.absolutePath, bounds)
-                        val scale = (maxOf(bounds.outWidth, bounds.outHeight) / 960).coerceAtLeast(1)
-                        val options = android.graphics.BitmapFactory.Options().apply {
-                            inSampleSize = scale
-                        }
-                        setImageBitmap(android.graphics.BitmapFactory.decodeFile(file.absolutePath, options))
-                        background = shape(Color.rgb(240, 244, 247), 10)
+                    val bounds = android.graphics.BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
                     }
-                    content.addView(picture, LinearLayout.LayoutParams(-1, dp(170)).apply {
+                    android.graphics.BitmapFactory.decodeFile(file.absolutePath, bounds)
+                    val options = android.graphics.BitmapFactory.Options().apply {
+                        inSampleSize = (maxOf(bounds.outWidth, bounds.outHeight) / 1200)
+                            .coerceAtLeast(1)
+                    }
+                    val picture = ImageView(this).apply {
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                        setImageBitmap(android.graphics.BitmapFactory.decodeFile(
+                            file.absolutePath, options))
+                        background = shape(Color.rgb(240, 244, 247), 10)
+                        contentDescription = "نمایش کامل " + imageTitle(name)
+                        setOnClickListener { openImageInPhone(name) }
+                    }
+                    val availableWidth = resources.displayMetrics.widthPixels - dp(86)
+                    val fittedHeight = if (bounds.outWidth > 0 && bounds.outHeight > 0)
+                        ((availableWidth.toLong() * bounds.outHeight / bounds.outWidth)
+                            .toInt()).coerceIn(dp(155), dp(370))
+                        else dp(220)
+                    content.addView(picture, LinearLayout.LayoutParams(-1, fittedHeight).apply {
                         topMargin = dp(9)
                     })
-                    content.addView(actionLabel("حذف این عکس") {
-                        AlertDialog.Builder(this).setTitle("حذف عکس")
-                            .setMessage("این عکس از یادداشت حذف شود؟")
-                            .setNegativeButton("انصراف", null)
-                            .setPositiveButton("حذف") { _, _ ->
-                                note.imageFilenames.remove(name)
-                                file.delete()
-                                saveNotes()
-                                renderNotes()
-                                detail.dismiss()
-                                showNoteDetail(note)
-                            }.show()
+                    content.addView(label(imageTitle(name), 13f, ink, true).apply {
+                        typeface = titleFont
+                        setPadding(dp(6), dp(6), dp(6), dp(3))
                     }, LinearLayout.LayoutParams(-1, -2))
+                    val controls = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        layoutDirection = View.LAYOUT_DIRECTION_RTL
+                    }
+                    content.addView(controls, LinearLayout.LayoutParams(-1, -2))
+                    controls.addView(actionLabel("تغییر نام") {
+                        renameImage(name) {
+                            detail.dismiss()
+                            showNoteDetail(note)
+                        }
+                    }, LinearLayout.LayoutParams(0, -2, 1f))
+                    controls.addView(actionLabel("حذف عکس") {
+                        confirmDeleteImage(note, name) {
+                            detail.dismiss()
+                            showNoteDetail(note)
+                        }
+                    }, LinearLayout.LayoutParams(0, -2, 1f))
                 }
             }
         }
@@ -2258,24 +2376,83 @@ class MainActivity : Activity() {
             .getString(filename, null)?.takeIf { it.isNotBlank() }
             ?: "عکس " + filename.take(6)
 
-    private fun renameImage(filename: String) {
-        val textField = EditText(this).apply {
-            setText(imageTitle(filename))
-            selectAll()
-            setSingleLine(true)
-            typeface = titleFont
-            setPadding(dp(18), dp(10), dp(18), dp(10))
+    private fun renameImage(filename: String, onRenamed: (() -> Unit)? = null) {
+        val ownerNote = notes.firstOrNull { filename in it.imageFilenames } ?: return
+        val originalTitle = imageTitle(filename)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(22), dp(8), dp(22), dp(6))
         }
-        AlertDialog.Builder(this)
-            .setTitle("تغییر نام عکس")
-            .setView(textField)
+        panel.addView(label("نام نمایشی عکس را تغییر دهید؛ فایل اصلی بدون تغییر می‌ماند.",
+            12f, muted), LinearLayout.LayoutParams(-1, -2).apply {
+            bottomMargin = dp(12)
+        })
+        val textField = EditText(this).apply {
+            setText(originalTitle)
+            setSelectAllOnFocus(true)
+            setSingleLine(true)
+            typeface = textFont
+            textSize = 15f
+            setTextColor(ink)
+            hint = "نام عکس"
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            background = shape(Color.rgb(246, 245, 255), 12, softBorder)
+            setPadding(dp(13), 0, dp(13), 0)
+            filters = arrayOf(android.text.InputFilter.LengthFilter(60))
+        }
+        panel.addView(textField, LinearLayout.LayoutParams(-1, dp(50)))
+        panel.addView(label("حداکثر ۶۰ نویسه", 11f, muted), LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = dp(7)
+        })
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("ویرایش نام عکس")
+            .setView(panel)
             .setNegativeButton("انصراف", null)
-            .setPositiveButton("ذخیره") { _, _ ->
+            .setPositiveButton("ذخیره نام", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val name = textField.text.toString().trim()
-                if (name.isNotEmpty()) {
+                when {
+                    name.isBlank() -> textField.error = "نام عکس نمی‌تواند خالی باشد"
+                    ownerNote.imageFilenames.any { it != filename &&
+                        imageTitle(it) == name } ->
+                        textField.error = "یک عکس دیگر در این یادداشت همین نام را دارد"
+                    else -> {
+                        getSharedPreferences("image_display_titles", MODE_PRIVATE).edit()
+                            .putString(filename, name).apply()
+                        renderOpenNotePage()
+                        dialog.dismiss()
+                        onRenamed?.invoke()
+                    }
+                }
+            }
+        }
+        dialog.show()
+        textField.requestFocus()
+    }
+
+    private fun confirmDeleteImage(
+        note: Note, filename: String, onDeleted: (() -> Unit)? = null
+    ) {
+        if (filename !in note.imageFilenames) return
+        AlertDialog.Builder(this)
+            .setTitle("حذف عکس")
+            .setMessage("عکس «" + imageTitle(filename) +
+                "» از این یادداشت و حافظه خصوصی برنامه حذف شود؟")
+            .setNegativeButton("انصراف", null)
+            .setPositiveButton("حذف") { _, _ ->
+                val file = storedImageFile(filename)
+                if (file != null && file.isFile && !file.delete()) {
+                    Toast.makeText(this, "حذف فایل عکس انجام نشد", Toast.LENGTH_LONG).show()
+                } else {
+                    note.imageFilenames.remove(filename)
                     getSharedPreferences("image_display_titles", MODE_PRIVATE).edit()
-                        .putString(filename, name).apply()
-                    renderOpenNotePage()
+                        .remove(filename).apply()
+                    saveNotes()
+                    renderNotes()
+                    onDeleted?.invoke()
                 }
             }.show()
     }

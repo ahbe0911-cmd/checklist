@@ -2,7 +2,7 @@ name: Build Native Android APK
 
 on:
   push:
-    branches: [main, feature/organized-rich-notes, fix/novi-blue-voice-update, fix/novi-blue-direct-camera-v202]
+    branches: [main, feature/organized-rich-notes, fix/novi-blue-voice-update, fix/novi-blue-direct-camera-v202, fix/novi-blue-search-image-tools-v203]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -56,7 +56,7 @@ jobs:
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: novi-blue-camera-v2.0.2-apk
+          name: novi-blue-search-images-v2.0.3-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
