@@ -1,10 +1,10 @@
-name: Build Native Android APK
+name: Build Novi Standalone APK
 
 on:
   push:
-    branches: [main, feature/organized-rich-notes]
+    branches: [release/novi-standalone]
   pull_request:
-    branches: [main]
+    branches: [release/novi-standalone]
   workflow_dispatch:
 
 permissions:
@@ -54,7 +54,7 @@ jobs:
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: checklist-native-debug-apk
+          name: novi-standalone-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
