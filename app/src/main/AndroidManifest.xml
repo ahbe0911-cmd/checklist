@@ -27,6 +27,10 @@
             android:authorities="com.ahbe.checklist.voicefiles"
             android:exported="false"
             android:grantUriPermissions="true"/>
+        <provider android:name=".CameraCaptureProvider"
+            android:authorities="com.ahbe.checklist.cameracapture"
+            android:exported="false"
+            android:grantUriPermissions="true"/>
         <provider android:name=".NoteImageProvider"
             android:authorities="com.ahbe.checklist.noteimages"
             android:exported="false"

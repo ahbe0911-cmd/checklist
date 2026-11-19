@@ -1529,7 +1529,17 @@ class MainActivity : Activity() {
             setPadding(dp(8), dp(4), dp(8), dp(4))
         }
         page.addView(pageVoiceStatus, LinearLayout.LayoutParams(-1, -2))
-        page.addView(label("＋ افزودن عکس", 14f, indigo, true).apply {
+        val imageActions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        page.addView(imageActions, LinearLayout.LayoutParams(-1, -2).apply {
+            marginStart = dp(16)
+            marginEnd = dp(16)
+            bottomMargin = dp(4)
+        })
+        imageActions.addView(label("＋ افزودن عکس", 14f, indigo, true).apply {
             typeface = titleFont
             gravity = Gravity.CENTER
             isClickable = true
@@ -1537,11 +1547,16 @@ class MainActivity : Activity() {
             background = shape(Color.rgb(237, 235, 255), 16)
             setPadding(dp(8), dp(9), dp(8), dp(9))
             setOnClickListener { pickImageForNote(note) }
-        }, LinearLayout.LayoutParams(-1, -2).apply {
-            marginStart = dp(16)
-            marginEnd = dp(16)
-            bottomMargin = dp(4)
-        })
+        }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(5) })
+        imageActions.addView(label("📷 عکس با دوربین", 14f, indigo, true).apply {
+            typeface = titleFont
+            gravity = Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+            background = shape(Color.rgb(237, 235, 255), 16)
+            setPadding(dp(8), dp(9), dp(8), dp(9))
+            setOnClickListener { captureImageForNote(note) }
+        }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(5) })
         page.addView(label("افزودن عکس، تاریخ یا جزئیات", 12f, indigo, true).apply {
             typeface = titleFont
             gravity = Gravity.CENTER
@@ -1792,6 +1807,13 @@ class MainActivity : Activity() {
             setOnClickListener {
                 detail.dismiss()
                 pickImageForNote(note)
+            }
+        })
+        mediaRow.addView(label("دوربین +", 12f, indigo, true).apply {
+            setPadding(dp(7), dp(8), dp(7), dp(8))
+            setOnClickListener {
+                detail.dismiss()
+                captureImageForNote(note)
             }
         })
         mediaRow.addView(label("صوت +", 12f, indigo, true).apply {
@@ -2271,6 +2293,50 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * Launch the phone's own camera. The camera writes the full-resolution
+     * image to a temporary private file exposed through a one-time URI grant.
+     * Gallery import and its existing storage format remain unchanged.
+     */
+    private fun captureImageForNote(note: Note) {
+        val prefs = getSharedPreferences("checklist_native", MODE_PRIVATE)
+        // Clean up an abandoned capture, but never touch already attached images.
+        prefs.getString("camera_capture_filename", null)?.let { old ->
+            CameraCaptureProvider.stagedFile(this, old)?.delete()
+        }
+        val filename = UUID.randomUUID().toString() + ".jpg"
+        val staged = CameraCaptureProvider.stagedFile(this, filename) ?: return
+        val prepared = runCatching {
+            staged.parentFile?.mkdirs()
+            staged.createNewFile()
+        }.getOrDefault(false)
+        if (!prepared) {
+            Toast.makeText(this, "آماده‌سازی دوربین انجام نشد", Toast.LENGTH_LONG).show()
+            return
+        }
+        val savedState = prefs.edit()
+            .putString("camera_capture_target", note.id)
+            .putString("camera_capture_filename", filename).commit()
+        if (!savedState) {
+            staged.delete()
+            Toast.makeText(this, "آماده‌سازی دوربین انجام نشد", Toast.LENGTH_LONG).show()
+            return
+        }
+        val outputUri = CameraCaptureProvider.uri(this, filename)
+        val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+            putExtra(MediaStore.EXTRA_OUTPUT, outputUri)
+            clipData = android.content.ClipData.newRawUri("Novi camera photo", outputUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }
+        runCatching { startActivityForResult(cameraIntent, 2017) }.onFailure {
+            staged.delete()
+            prefs.edit().remove("camera_capture_target")
+                .remove("camera_capture_filename").apply()
+            Toast.makeText(this, "برنامه دوربین در دسترس نیست", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun openImageInPhone(filename: String) {
         val file = storedImageFile(filename)
         if (file == null || !file.isFile) {
@@ -2314,6 +2380,47 @@ class MainActivity : Activity() {
                     }
                 }.start()
             }
+            return
+        }
+        if (requestCode == 2017) {
+            val prefs = getSharedPreferences("checklist_native", MODE_PRIVATE)
+            val filename = prefs.getString("camera_capture_filename", null)
+            val noteId = prefs.getString("camera_capture_target", null)
+            prefs.edit().remove("camera_capture_filename")
+                .remove("camera_capture_target").commit()
+            val staged = filename?.let { CameraCaptureProvider.stagedFile(this, it) }
+            val note = notes.firstOrNull { it.id == noteId }
+            val valid = resultCode == RESULT_OK && note != null &&
+                staged?.isFile == true && staged.length() in 1L..(15L * 1024 * 1024)
+            val bounds = android.graphics.BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            if (valid) {
+                android.graphics.BitmapFactory.decodeFile(staged!!.absolutePath, bounds)
+            }
+            val destination = filename?.let { storedImageFile(it) }
+            val saved = if (valid && bounds.outWidth > 0 && bounds.outHeight > 0 &&
+                destination != null) {
+                runCatching {
+                    destination.parentFile?.mkdirs()
+                    staged!!.inputStream().use { input ->
+                        destination.outputStream().use { output -> input.copyTo(output) }
+                    }
+                }.isSuccess
+            } else false
+            staged?.delete()
+            if (saved && note != null && filename != null) {
+                note.imageFilenames.add(filename)
+                saveNotes()
+                renderNotes()
+            } else {
+                destination?.delete()
+                if (resultCode == RESULT_OK) {
+                    Toast.makeText(this, "عکس دوربین ذخیره نشد یا حجم آن بیشتر از ۱۵ مگابایت است",
+                        Toast.LENGTH_LONG).show()
+                }
+            }
+            renderOpenNotePage()
             return
         }
         if (requestCode == 2016) {
