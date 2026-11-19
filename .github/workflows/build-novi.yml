@@ -1,0 +1,50 @@
+name: Build Novi Standalone APK
+
+on:
+  push:
+    branches: [main, feature/standalone-novi-zip-modal]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-novi:
+    name: Novi independent Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+
+      - name: Install required SDK packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+          cache-read-only: false
+
+      - name: Build standalone Novi APK
+        run: gradle :novi:assembleDebug --no-daemon --stacktrace
+
+      - name: Upload Novi installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: novi-standalone-debug-apk
+          path: novi/build/outputs/apk/debug/novi-debug.apk
+          if-no-files-found: error
+          retention-days: 30
