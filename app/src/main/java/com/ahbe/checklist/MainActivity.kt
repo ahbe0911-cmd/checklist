@@ -1023,7 +1023,7 @@ class MainActivity : Activity() {
             bottomMargin = dp(9)
         })
         searchField = EditText(this).apply {
-            hint = "نام یا متن یادداشت را بنویسید"
+            this.hint = "نام یا متن یادداشت را بنویسید"
             textSize = searchTextSize.toFloat()
             typeface = textFont
             setTextColor(ink)
